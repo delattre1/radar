@@ -1,11 +1,28 @@
-# agente-tarefas — composicao do agente.
+# RadaR — composicao do agente.
 #
 # Copiado do exemplo publicado pela Plow (plow-agents/compose.example.yml), no
-# clone de leitura. Não tem variável de ambiente nenhuma: o exemplo da Plow não
-# pede identificador de agente, e esta casa não inventa um.
+# clone de leitura.
+#
+# O comentario anterior dizia aqui que "o exemplo da Plow nao pede identificador
+# de agente, e esta casa nao inventa um". Era verdade sobre o compose.example.yml
+# e FALSA como conclusao: o `AGENT_ID` esta no README da Plow, e sem ele o
+# reporter do Agent Index sobe, avisa que nao tem para quem reportar, e dorme
+# 86400. O agente funciona igual e o placar nao enxerga nada.
 services:
   agent:
     build: .
+    environment:
+      # PARA QUEM ESTE INSTALL REPORTA. Nao e segredo e nao e por instalacao:
+      # e a PAGINA do agente no Agent Index, a mesma para todo mundo que
+      # instalar o RadaR. O Indice aceita uso da chave de qualquer instalador
+      # sobre um agente ja registrado, e cada copia sorteia o proprio id de
+      # instalacao — e assim que instalacao e uso somam na mesma pagina.
+      #
+      #     https://aiworthusing.com/agent-index/radar
+      #
+      # Quem quiser rodar sem aparecer no placar apaga esta linha: o servico
+      # entao se recusa a chutar um nome e fica parado, de proposito.
+      AGENT_ID: radar
     volumes:
       # `.host`: a imagem copia o arquivo para o lugar definitivo como root, então
       # a propriedade dele aqui no disco do Windows não importa.
