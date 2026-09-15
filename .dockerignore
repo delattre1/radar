@@ -1,0 +1,26 @@
+# Bytecode compilado. O `COPY skills/` leva a pasta inteira para DUAS raizes
+# dentro da imagem, entao sem esta linha o `.pyc` velho viaja junto e fica la.
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# A credencial NAO e copiada pelo Dockerfile — ela entra por montagem do
+# compose, em execucao. Fica fora do contexto de build de qualquer forma: o
+# contexto inteiro e enviado ao daemon, e segredo nao precisa fazer essa viagem.
+plow-credentials
+plow-credentials.*
+
+# A casa: lei, conhecimento, armadilhas, handoff e material de fora. Nada disso
+# entra na imagem, e tirar do contexto deixa o build mais leve.
+CLAUDE.md
+CONHECIMENTO.md
+ARMADILHAS.md
+HANDOFF.md
+PASSOS.md
+LEIA-PRIMEIRO.md
+MATERIAL-*.md
+handoff/
+material-de-fora/
+.ai-memory.toml
+.claude/
+.git/

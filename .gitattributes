@@ -1,0 +1,11 @@
+# QUEBRA DE LINHA: LF SEMPRE, inclusive na copia de trabalho no Windows.
+#
+# Nao e preferencia de estilo. `image/cont-init.d/*` e `image/s6-overlay/**`
+# sao scripts de shell executados DENTRO do conteiner Linux. Com CRLF o
+# interpretador le o `\r` como parte do comando e o script morre — no boot,
+# depois do build, longe de quem editou.
+#
+# Sem esta linha o git no Windows converte na saida ("LF will be replaced by
+# CRLF the next time Git touches it") e a proxima construcao carrega os
+# scripts quebrados para dentro da imagem.
+* text=auto eol=lf

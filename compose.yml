@@ -1,0 +1,36 @@
+# agente-tarefas — composicao do agente.
+#
+# Copiado do exemplo publicado pela Plow (plow-agents/compose.example.yml), no
+# clone de leitura. Não tem variável de ambiente nenhuma: o exemplo da Plow não
+# pede identificador de agente, e esta casa não inventa um.
+services:
+  agent:
+    build: .
+    volumes:
+      # `.host`: a imagem copia o arquivo para o lugar definitivo como root, então
+      # a propriedade dele aqui no disco do Windows não importa.
+      # Esta é a ÚNICA credencial que o contêiner vê. A credencial da CONTA vive
+      # fora desta pasta e nunca entra aqui.
+      - ./plow-credentials:/var/lib/plow/credentials.host:ro
+      # A casa do agente, preservada entre `up` e `down` — sessões e configuração.
+      #
+      # Uma edição na persona NÃO precisa de `down -v`: o `plow-init` compõe a
+      # identidade dentro da casa a cada boot, então `up --build -d` basta.
+      #
+      # `docker compose down -v` APAGA este volume. Depois do registro no Índice
+      # isso é irreversível no que importa: o id da instalação vai junto, e a
+      # identidade no placar troca. Usar só para descartar o agente de propósito.
+      #
+      # Corrigido em 11/09/2026. O comentário anterior mandava rodar `down -v`
+      # para ver mudança de persona — era a premissa derrubada de 09/09 virada
+      # em comando, e o comando é justamente o que queima a identidade.
+      # Fonte: `plow-hermes-agent/compose.yml` no clone de leitura, que diz na
+      # letra "An edit to SOUL.md does not need it".
+      - agent-home:/var/lib/hermes
+    # O agente salva estado no SIGTERM; o supervisor dele dá 30s, e o padrão de
+    # 10s do Docker corta no meio e órfã a transcrição.
+    stop_grace_period: 35s
+    # Sem portas: o agente conecta para fora, na direção da Plow.
+
+volumes:
+  agent-home:

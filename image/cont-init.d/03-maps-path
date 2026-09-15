@@ -1,0 +1,186 @@
+#!/bin/sh
+# Point the `maps` skill at the script it actually ships with, as root, before
+# any service starts.
+#
+# WHY THIS EXISTS
+#
+# `productivity/maps/SKILL.md` tells the agent, in four places, to run:
+#
+#     python ~/.hermes/skills/maps/scripts/maps_client.py
+#
+# That path does not exist here, and the failure is measured. From `agent.log`
+# on 14/09/2026, during the first real end-to-end run:
+#
+#     python: can't open file
+#     '/var/lib/hermes/home/.hermes/skills/maps/scripts/maps_client.py':
+#     [Errno 2] No such file or directory
+#
+# TWO things are wrong with that literal, and only the second one is ours:
+#
+#   1. `~/.hermes` is upstream's own home convention, written for an install
+#      where HERMES_HOME is `~/.hermes`. In this image HERMES_HOME is
+#      `/var/lib/hermes` and `~` is `/var/lib/hermes/home`, so the two never
+#      meet. Nothing this house did caused that.
+#   2. The skill assumes a FLAT root (`skills/maps/`). Here it lives NESTED, in
+#      `skills/productivity/maps/`, which is how the poda of 14/09/2026 left it.
+#
+# WHY IT IS A DEFECT AND NOT AN ANNOYANCE
+#
+# The agent recovered on its own -- it went looking, found the script in the
+# right place, and answered with the real agency at 1.9 km. But it paid three
+# extra API calls to do it, nothing guarantees it recovers next time, and what
+# it delivered BEFORE recovering was an invented agency ("Irenu Correio") that
+# reached the owner's phone. A tool failed, and the agent did not say a tool
+# failed: it improvised and delivered.
+#
+# WHY A SCRIPT AND NOT AN EDIT, AND WHY BOTH ROOTS
+#
+# There is no file of ours to edit. `skills/` in this repository holds only
+# `lembrete` and `recado`; `maps` comes from the base image. Copying it here to
+# fix four lines would make this house the owner of a Plow skill forever, and a
+# base update would never reach it again. Rewriting the text in place at boot
+# leaves the base owning the skill and only corrects the path it hardcodes --
+# and the day upstream fixes it, the literal is gone and this becomes a no-op.
+#
+# TWO roots are patched, because they are read at two different moments:
+#
+#     /var/lib/hermes/skills   the live home -- what the agent reads TODAY.
+#                              It is a volume, so nothing built into the image
+#                              can reach it. Only a boot can.
+#     /opt/hermes/skills       the bundled seed (`tools/skills_sync.py` resolves
+#                              it as `<package>/skills`). A home that starts
+#                              empty is copied FROM here on first boot, so a
+#                              stranger's install gets the corrected text
+#                              without waiting for a second boot.
+#
+# EACH ROOT IS POINTED AT ITS OWN SCRIPT, and that is not cosmetic. Measured in
+# a disposable container on 14/09/2026: in the pure image `/var/lib/hermes/
+# skills` has NO `maps` at all -- it only arrives in the home when the sync
+# seeds it, at first boot, after this script has already run. A first version
+# of this file resolved one path from HERMES_HOME and guarded on it globally,
+# so on a stranger's install the guard was false and BOTH roots were left
+# alone. Resolving per root makes the guard local: a root is patched only when
+# the script it is about to promise is sitting right there, next to the text.
+#
+# WHY THE SYNC DOES NOT UNDO THIS
+#
+# Read in `tools/skills_sync.py` on 14/09/2026: the manifest holds an origin
+# hash per skill, and when the user copy no longer matches it the skill is
+# recorded as user-modified and SKIPPED -- quietly, with no conflict and no
+# backup. Both copies here end up byte-identical, so whichever branch it takes,
+# our text survives.
+#
+# WHY NOT A SYMLINK AT `~/.hermes/skills/maps`
+#
+# It was the obvious fix and it is the dangerous one. `get_hermes_home()` falls
+# back to the platform-native default when HERMES_HOME is unset, and upstream's
+# own docstring warns that subprocess spawners are expected to propagate it
+# explicitly. Building a half-real `~/.hermes` gives that fallback somewhere
+# plausible to land, and trades a loud missing file for a silent wrong home.
+set -eu
+
+PYTHON=/opt/hermes/.venv/bin/python
+BROKEN='~/.hermes/skills/maps/scripts/maps_client.py'
+# The home is derived rather than assumed. HERMES_HOME is set in the image, but
+# a default keeps this honest if it ever is not.
+HOME_DIR="${HERMES_HOME:-/var/lib/hermes}"
+
+[ -x "$PYTHON" ] || exit 0
+
+for ROOT in "$HOME_DIR/skills" /opt/hermes/skills; do
+    SKILL="$ROOT/productivity/maps/SKILL.md"
+    REAL="$ROOT/productivity/maps/scripts/maps_client.py"
+    TMP="$SKILL.mapspath-tmp"
+
+    [ -f "$SKILL" ] || continue
+    # Never write through a symlink the agent may have left here: this is root.
+    [ -L "$SKILL" ] && continue
+    # The script this root is about to promise has to be sitting next to the
+    # text. If it is not, rewriting the path only swaps one wrong answer for
+    # another -- so leave the loud missing file the agent can at least report.
+    [ -f "$REAL" ] || {
+        echo "03-maps-path: $REAL is missing; $SKILL left alone" >&2
+        continue
+    }
+
+    rm -f "$TMP"
+
+    # Captured rather than tested with `if !`, which inverts the status: inside
+    # the branch `$?` would read 0 and the quiet "nothing to do" path would
+    # announce itself as a failure on every boot after the first.
+    status=0
+    "$PYTHON" - "$SKILL" "$TMP" "$BROKEN" "$REAL" <<'PY' || status=$?
+import os
+import sys
+
+skill_path, new_path, broken, real = sys.argv[1:5]
+
+try:
+    with open(skill_path, encoding="utf-8") as handle:
+        old = handle.read()
+except Exception:
+    sys.exit(1)
+
+hits = old.count(broken)
+if hits == 0:
+    # Already corrected, or upstream fixed it. This is the quiet path on every
+    # boot after the first.
+    sys.exit(2)
+
+new = old.replace(broken, real)
+
+# Verify what was produced instead of trusting the replace. A rewrite is cheap
+# to get right and cheaper to check than to trust -- the same reasoning
+# `01-stt-language` and `02-cron-wrap` are built on.
+if broken in new:
+    sys.exit(1)
+old_lines = old.splitlines(keepends=True)
+new_lines = new.splitlines(keepends=True)
+# Nothing may appear, vanish or move: a path substitution changes lines in
+# place and cannot change how many there are.
+if len(old_lines) != len(new_lines):
+    sys.exit(1)
+changed = 0
+for before, after in zip(old_lines, new_lines):
+    if before == after:
+        # A line that did not change must not have been one that needed to.
+        if broken in before:
+            sys.exit(1)
+        continue
+    # A line that did change must be exactly that line with the path swapped.
+    if after != before.replace(broken, real):
+        sys.exit(1)
+    changed += 1
+if changed == 0:
+    sys.exit(1)
+# The path the text now promises has to resolve to a real, readable file.
+if not os.path.isfile(real) or not os.access(real, os.R_OK):
+    sys.exit(1)
+
+try:
+    with open(new_path, "w", encoding="utf-8") as handle:
+        handle.write(new)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+
+    if [ "$status" -ne 0 ]; then
+        rm -f "$TMP"
+        # 2 is "nothing to do", and is the quiet path on every boot after the
+        # first.
+        [ "$status" -eq 2 ] || \
+            echo "03-maps-path: could not rewrite $SKILL; left alone" >&2
+        continue
+    fi
+
+    # Carry the original owner and mode over, rather than deciding them here:
+    # the two roots do not agree (10000:10000 in the home, 0:0 in the bundle)
+    # and neither is this script's to change.
+    chown "$(stat -c '%u:%g' "$SKILL")" "$TMP"
+    chmod "$(stat -c '%a' "$SKILL")" "$TMP"
+    # Renamed onto the real name, so the skill is either untouched or whole.
+    mv -f "$TMP" "$SKILL"
+    echo "03-maps-path: pointed $SKILL at $REAL" >&2
+done

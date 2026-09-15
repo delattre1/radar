@@ -1,0 +1,208 @@
+#!/bin/sh
+# Drop the machine envelope from scheduled deliveries, as root, before any
+# service starts.
+#
+# WHY THIS EXISTS
+#
+# `cron/scheduler.py` wraps every delivered job in a header, the job id, a rule
+# of dashes and a footer telling the person how to cancel it:
+#
+#     Cronjob Response: Correios reminder - Carla package
+#     (job_id: 13dbb5996539)
+#     -------------
+#
+#     <the actual reminder>
+#
+#     To stop or manage this job, send me a new message (e.g. "stop reminder ...").
+#
+# Measured 14/09/2026 on the first real end-to-end run: the reminder arrived
+# correct and buried. For an agent whose whole promise is arriving like someone
+# who remembered, the envelope is the product contradicting itself -- it
+# announces that a machine fired, at the exact moment the point was that a
+# reminder came. The upstream default is right for a general agent running many
+# jobs, and wrong for this one, which only ever creates one-shot reminders.
+#
+# The scheduler reads `cron.wrap_response` and says so in its own comment:
+# "Wrapping is on by default; set cron.wrap_response: false in config.yaml for
+# clean output." So this is a supported switch, not a patch -- nothing in the
+# base image is rewritten, and a base update cannot undo it.
+#
+# WHAT IS LOST, AND WHERE IT WENT
+#
+# The footer was the only hint that a scheduled job can be cancelled. That
+# affordance moves into the persona, which can offer it when it fits the
+# conversation instead of stapling it to every delivery.
+#
+# WHY A SCRIPT, AND WHY EVERY BOOT
+#
+# Same reason as `01-stt-language`, and by the same measured path:
+# `00-plow-sanitize` seeds an ABSENT config.yaml only, and `configure()`
+# rewrites just the keys it owns. A home that already exists never learns a new
+# seed value. Running every boot is what reaches the owner's existing home AND
+# a stranger's first boot through one door.
+#
+# WHY ruamel ROUND-TRIP AND NOT AN APPEND -- PAID FOR IN A BROKEN BOOT
+#
+# The first version of this script appended a second `cron:` block rather than
+# editing in place, reasoning that a load-and-dump destroys the comments
+# upstream wrote next to each key. That reasoning is true of PyYAML and false
+# of ruamel, whose round-trip mode exists precisely to keep them -- which is
+# why `slash-lock.py` already edits THIS FILE that way.
+#
+# The append shipped and broke the boot of 14/09/2026. PyYAML tolerates a
+# duplicate top-level key and keeps the last, so the append verified clean
+# against it. ruamel RAISES on one. `slash-lock.py` loads this same config with
+# ruamel, so the duplicate took down the command lock, which fell back to its
+# emergency close -- every slash command denied, the owner's included. The lock
+# behaved correctly; the config handed to it did not.
+#
+# The lesson is the one this house already had written down and this script
+# still managed to pay for again: a mechanism proved against one consumer is
+# not proved. This file has at least two readers with different parsers, and
+# the stricter one decides what is valid.
+#
+# `allow_duplicate_keys` is on below so that a home already carrying the
+# appended block is REPAIRED by this script rather than needing a hand: ruamel
+# keeps the last of the duplicates, and the dump writes a single `cron:` back.
+set -eu
+
+CONFIG=/var/lib/hermes/config.yaml
+PYTHON=/opt/hermes/.venv/bin/python
+TMP="$CONFIG.cronwrap-tmp"
+
+# `00-plow-sanitize` owns seeding. If there is no config yet, something ahead
+# of this failed, and inventing one here would hide it.
+[ -f "$CONFIG" ] || exit 0
+# Never write through a symlink the agent may have left here: this runs as root.
+[ -L "$CONFIG" ] && exit 0
+[ -x "$PYTHON" ] || exit 0
+
+rm -f "$TMP"
+
+# Captured rather than tested with `if !`, which inverts the status: inside the
+# branch `$?` would read 0 and the quiet "nothing to do" path would announce
+# itself as a failure on every boot after the first.
+status=0
+"$PYTHON" - "$CONFIG" "$TMP" <<'PY' || status=$?
+import sys
+
+from ruamel.yaml import YAML
+
+old_path, new_path = sys.argv[1], sys.argv[2]
+
+try:
+    with open(old_path, encoding="utf-8") as handle:
+        text = handle.read()
+except Exception:
+    sys.exit(1)
+
+# Round-trip, so the comments upstream wrote next to each key survive. Measured
+# 13/09/2026: 36 of them live in a real home. Duplicates are allowed on the way
+# IN only, to repair a home that an earlier version of this script appended to;
+# the dump always writes a single key back.
+yaml = YAML()
+yaml.preserve_quotes = True
+yaml.allow_duplicate_keys = True
+
+try:
+    config = yaml.load(text)
+except Exception:
+    sys.exit(1)
+
+if config is None:
+    # An empty config is not ours to invent.
+    sys.exit(2)
+
+cron = config.get("cron")
+if cron is None:
+    config["cron"] = {"wrap_response": False}
+    cron = config["cron"]
+elif not hasattr(cron, "get"):
+    # `cron:` holds something that is not a mapping. Someone meant that; leave it.
+    sys.exit(1)
+else:
+    cron["wrap_response"] = False
+
+# Nothing to do when the key is already set AND the file carries a single
+# `cron:` -- the second half is what makes a repaired home settle down instead
+# of being rewritten on every boot.
+declarations = sum(1 for line in text.splitlines() if line.startswith("cron:"))
+if declarations == 1 and "wrap_response" in text:
+    sys.exit(2)
+
+try:
+    with open(new_path, "w", encoding="utf-8") as handle:
+        yaml.dump(config, handle)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+
+if [ "$status" -ne 0 ]; then
+    rm -f "$TMP"
+    # 2 is "nothing to do", and is the quiet path on every boot after the first.
+    [ "$status" -eq 2 ] || echo "02-cron-wrap: could not build the config; left alone" >&2
+    exit 0
+fi
+
+# Parse what was actually produced, and refuse to install anything that is not
+# still the same config plus the one key. Checked with BOTH parsers that read
+# this file in production: PyYAML for the value comparison, and ruamel because
+# it is the strict one, and the one whose failure took down the command lock.
+if "$PYTHON" - "$TMP" "$CONFIG" <<'PY'
+import sys
+
+import yaml
+from ruamel.yaml import YAML
+
+new_path, old_path = sys.argv[1], sys.argv[2]
+
+try:
+    with open(new_path, encoding="utf-8") as handle:
+        new = yaml.safe_load(handle)
+    with open(old_path, encoding="utf-8") as handle:
+        old = yaml.safe_load(handle) or {}
+except Exception:
+    sys.exit(1)
+
+if not isinstance(new, dict) or not isinstance(old, dict):
+    sys.exit(1)
+
+old_cron = old.get("cron")
+old_cron = dict(old_cron) if isinstance(old_cron, dict) else {}
+expected_cron = dict(old_cron)
+expected_cron["wrap_response"] = False
+
+if new.get("cron") != expected_cron:
+    sys.exit(1)
+# Every key that was there is still there, unchanged. The only difference this
+# write is allowed to make is inside `cron`.
+if {k: v for k, v in new.items() if k != "cron"} != {
+    k: v for k, v in old.items() if k != "cron"
+}:
+    sys.exit(1)
+
+# The strict reader must be able to load the result with duplicates FORBIDDEN,
+# which is how every other consumer opens this file. This is the check whose
+# absence broke the boot of 14/09/2026.
+strict = YAML()
+strict.preserve_quotes = True
+try:
+    with open(new_path, encoding="utf-8") as handle:
+        strict.load(handle)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+then
+    chown hermes:hermes "$TMP"
+    chmod 0640 "$TMP"
+    # Renamed onto the real name, so the config is either untouched or whole.
+    mv -f "$TMP" "$CONFIG"
+    echo "02-cron-wrap: scheduled deliveries will arrive unwrapped" >&2
+else
+    rm -f "$TMP"
+    echo "02-cron-wrap: refused to write an unverifiable config; left alone" >&2
+fi

@@ -1,0 +1,34 @@
+# O SEGREDO. Nao negociavel.
+#
+# `plow-credentials` carrega PLOW_AGENT_TOKEN — o cracha do agente. Quem tiver
+# esse arquivo fala pela linha. Cada pessoa que instala minta o seu proprio com
+# `plow-agents mint`; nenhum vai junto no repositorio.
+plow-credentials
+plow-credentials.*
+!plow-credentials.example
+
+# Lixo de build e de execucao.
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ---------------------------------------------------------------------------
+# A CASA — nao e produto.
+#
+# Isto e o material de construcao deste agente: lei, conhecimento medido,
+# armadilhas, handoff e material de fora. Serve a quem constroi, nao a quem
+# instala, e parte dele carrega nome, numero e horario do autor.
+#
+# Se voce quiser qualquer um destes publico, apague a linha. E so isso.
+# ---------------------------------------------------------------------------
+CLAUDE.md
+CONHECIMENTO.md
+ARMADILHAS.md
+HANDOFF.md
+PASSOS.md
+LEIA-PRIMEIRO.md
+MATERIAL-*.md
+handoff/
+material-de-fora/
+.ai-memory.toml
+.claude/

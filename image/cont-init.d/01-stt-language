@@ -1,0 +1,114 @@
+#!/bin/sh
+# Clear the forced-English hint from speech-to-text, as root, before any
+# service starts.
+#
+# WHY THIS EXISTS
+#
+# `hermes_cli/config_defaults.py` ships `stt.language: "en"` -- a deliberate
+# upstream default, on the reasoning that automatic detection misreads a short
+# or accented clip. For an agent whose owner speaks Portuguese it is the worst
+# of both: transcription does not fail, it SUCCEEDS in the wrong language.
+# Measured 13/09/2026 on five of five real voice messages -- forced English
+# corrupted every one ("ir no correio" came back as "Irenu Correio", and the
+# deadline inside the message was simply gone). With the hint cleared, the same
+# five came back as Portuguese at 0.97-1.00 confidence.
+#
+# The resolution order is `stt.<provider>.language` -> `stt.language` ->
+# environment variable -> None. Rung two is never empty, so the environment
+# variable can never win and an empty `stt.local.language` changes nothing.
+# The one key that resolves is `stt.language: ""`, which restores automatic
+# detection.
+#
+# NOT "pt". Fixing Portuguese repeats the mistake this house already rejected
+# for the timezone: it serves this owner and silently breaks the next one.
+# Automatic detection serves a Brazilian, an American and a German equally, and
+# none of them has to configure anything.
+#
+# WHY A SCRIPT, AND WHY EVERY BOOT
+#
+# `00-plow-sanitize` seeds an ABSENT config.yaml only, and `configure()`
+# rewrites just the keys it owns -- `stt` is not one of them. So a home that
+# already exists never learns a new seed value. Running on every boot is what
+# makes this reach the owner's existing home AND a stranger's first boot by the
+# same path. Upstream reached the same conclusion for its own model registry,
+# in plow-init.py, and for the same reason.
+#
+# WHY APPENDED TEXT AND NOT A YAML REWRITE
+#
+# Measured 13/09/2026 on the real home: 3148 bytes carrying 36 comment lines
+# that survived first boot. Loading and re-dumping through yaml is cleaner to
+# write and destroys every one of them -- upstream's reasoning for each key,
+# deleted by us, in the owner's own file. Appending keeps the file whole. The
+# guard below is a top-level key check, which is sound here because YAML
+# top-level keys start at column zero, and the result is parsed and verified
+# before it replaces anything.
+set -eu
+
+CONFIG=/var/lib/hermes/config.yaml
+PYTHON=/opt/hermes/.venv/bin/python
+TMP="$CONFIG.stt-tmp"
+
+# `00-plow-sanitize` owns seeding. If there is no config yet, something ahead
+# of this failed, and inventing one here would hide it.
+[ -f "$CONFIG" ] || exit 0
+# Never write through a symlink the agent may have left here: this runs as root.
+[ -L "$CONFIG" ] && exit 0
+[ -x "$PYTHON" ] || exit 0
+
+# Already carries a top-level `stt:` -- either this ran before, or the owner
+# set a language on purpose. Either way it is not ours to overwrite.
+grep -q '^stt:' "$CONFIG" && exit 0
+
+rm -f "$TMP"
+cat "$CONFIG" > "$TMP"
+# A file not ending in a newline would swallow the first appended line.
+[ -s "$TMP" ] && [ "$(tail -c 1 "$TMP" | wc -l)" -eq 0 ] && printf '\n' >> "$TMP"
+
+cat >> "$TMP" <<'YAML'
+
+# Restores automatic language detection for speech-to-text. The image default
+# is "en", which transcribes Portuguese into confident, wrong English rather
+# than failing. Empty is the only value that resolves: an env var cannot win
+# against it and stt.<provider>.language does not fall through.
+stt:
+  language: ""
+YAML
+
+# Parse what was actually produced, and refuse to install anything that is not
+# still the same config plus the one key. An append is cheap to get right and
+# cheaper to verify than to trust.
+if "$PYTHON" - "$TMP" "$CONFIG" <<'PY'
+import sys
+
+import yaml
+
+new_path, old_path = sys.argv[1], sys.argv[2]
+
+try:
+    with open(new_path, encoding="utf-8") as handle:
+        new = yaml.safe_load(handle)
+    with open(old_path, encoding="utf-8") as handle:
+        old = yaml.safe_load(handle) or {}
+except Exception:
+    sys.exit(1)
+
+if not isinstance(new, dict) or not isinstance(old, dict):
+    sys.exit(1)
+if new.get("stt") != {"language": ""}:
+    sys.exit(1)
+# Every key that was there is still there, unchanged. The only difference the
+# append is allowed to make is the one key it adds.
+if {k: v for k, v in new.items() if k != "stt"} != old:
+    sys.exit(1)
+sys.exit(0)
+PY
+then
+    chown hermes:hermes "$TMP"
+    chmod 0640 "$TMP"
+    # Renamed onto the real name, so the config is either untouched or whole.
+    mv -f "$TMP" "$CONFIG"
+    echo "01-stt-language: cleared the forced-English STT hint" >&2
+else
+    rm -f "$TMP"
+    echo "01-stt-language: refused to write an unverifiable config; left alone" >&2
+fi
