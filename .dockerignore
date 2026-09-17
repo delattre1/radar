@@ -4,9 +4,11 @@ __pycache__/
 *.pyc
 .pytest_cache/
 
-# A credencial NAO e copiada pelo Dockerfile — ela entra por montagem do
-# compose, em execucao. Fica fora do contexto de build de qualquer forma: o
-# contexto inteiro e enviado ao daemon, e segredo nao precisa fazer essa viagem.
+# A credencial NAO e copiada pelo Dockerfile — ela entra pelo AMBIENTE, em
+# execucao (`env_file` no compose, ou o ambiente da VM num deploy de nuvem).
+# Fica fora do contexto de build de qualquer forma: o contexto inteiro e
+# enviado ao daemon, e segredo nao precisa fazer essa viagem. O `image build`
+# do plow-agents recusa construir se estas linhas nao estiverem aqui.
 plow-credentials
 plow-credentials.*
 
