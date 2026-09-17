@@ -1,10 +1,19 @@
 # agente-tarefas — agente derivado da imagem base da Plow.
 #
-# Pino: tag imutável `base-<sha completo do commit>`, e o sha é o do commit
-# que esta casa LEU no código publicado (910b8e3, de 16/09/2026). Código
-# conferido e imagem rodada são o mesmo commit — é isso que a tag compra.
-# Digest equivalente, para quem quiser prender mais forte:
-#   sha256:f4739b6e74309dcccd087792949fd613191db7f33d33109c78127684dcb5dd73
+# Pino: tag imutável `base-<sha completo do commit>` MAIS o digest, que é como
+# o próprio organizador publicou. A tag diz qual commit é; o digest garante que
+# o byte não mudou embaixo dela.
+#
+# POR QUE ESTÁ NO 51f83158 (17/09 20:19 UTC), desde 17/09/2026: ordem direta do
+# Dane no `#ai-worth-using-hackathon`, com `@everyone`, nove minutos depois da
+# imagem nascer — "atualize a primeira linha do seu Dockerfile", reconstrua,
+# confirme que responde, e poste. Esta casa NÃO leu o código deste commit: o
+# pino veio da ordem, e a conferência que coube foi a do registro público da
+# ECR — a tag existe, é `linux/amd64`, e o digest bate com o que ele deu.
+#
+# O pino anterior era o 910b8e3 (16/09 20:56 UTC), e ele NÃO estava quebrado —
+# o defeito que a ordem descreve, base que só lê o login de um arquivo, era do
+# 4747960. Estávamos um pino atrás, não parados.
 #
 # POR QUE SAIU DO 4747960 (10/09), em 17/09/2026: naquele commit o `plow-init`
 # lia a credencial SÓ de `/var/lib/plow/credentials` e rebaixava o ambiente na
@@ -18,7 +27,7 @@
 # b78250e APAGOU do `00-plow-sanitize` a promoção de `credentials.host`. Quem
 # subir este pino continuando a montar o `.host` fica sem credencial nenhuma e
 # estaciona igual — só que na própria máquina, em vez de na nuvem.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-910b8e3ba8980e20faae9f37dcaca0ea9d8bd9ae
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-51f83158a70a383f03a4d03dbd8b6ea102cf0361@sha256:253d7ed3409effa7fa59113d93b4b79bb731d8264cdaf4cd60294924d0110a2e
 
 # A identidade específica deste agente.
 #
