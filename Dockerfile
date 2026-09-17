@@ -1,11 +1,24 @@
 # agente-tarefas — agente derivado da imagem base da Plow.
 #
 # Pino: tag imutável `base-<sha completo do commit>`, e o sha é o do commit
-# que esta casa LEU no clone de leitura (4747960, de 10/09/2026). Código
+# que esta casa LEU no código publicado (910b8e3, de 16/09/2026). Código
 # conferido e imagem rodada são o mesmo commit — é isso que a tag compra.
 # Digest equivalente, para quem quiser prender mais forte:
-#   sha256:fe9b0f428f9ed2da1698ecf0b504c79eceb9e016e770291ff6b3418b9f65449d
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-4747960eaa8a44ac24424bf0cc6c22559af61f43
+#   sha256:f4739b6e74309dcccd087792949fd613191db7f33d33109c78127684dcb5dd73
+#
+# POR QUE SAIU DO 4747960 (10/09), em 17/09/2026: naquele commit o `plow-init`
+# lia a credencial SÓ de `/var/lib/plow/credentials` e rebaixava o ambiente na
+# letra — "The file is the ONLY source". A nuvem da Plow entrega pelo AMBIENTE,
+# então uma imagem presa ali estaciona esperando um arquivo que nunca chega.
+# O commit b78250e inverteu: ambiente primeiro, arquivo como queda até o
+# plow#2007. Lido no código dos dois commits e conferido DENTRO da imagem
+# construída, não suposto.
+#
+# ELE ANDA JUNTO COM O `compose.yml`, E AS DUAS MEXIDAS NÃO SE SEPARAM: o mesmo
+# b78250e APAGOU do `00-plow-sanitize` a promoção de `credentials.host`. Quem
+# subir este pino continuando a montar o `.host` fica sem credencial nenhuma e
+# estaciona igual — só que na própria máquina, em vez de na nuvem.
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-910b8e3ba8980e20faae9f37dcaca0ea9d8bd9ae
 
 # A identidade específica deste agente.
 #
@@ -108,9 +121,25 @@ RUN chmod 0755 /etc/s6-overlay/scripts/slash-lock.py
 # chave aqui só criaria um segundo lugar para discordar do Dockerfile.
 #
 # SEM `AGENT_ID` no ambiente ele NÃO CHUTA NOME: avisa que não há agente para
-# reportar e dorme. Por isso esta peça entra ANTES de existir id registrado —
-# é fiação inerte até o `AGENT_ID` chegar no `compose.yml`.
+# reportar e dorme.
 #
+# PARA QUEM ESTE INSTALL REPORTA. Não é segredo e não é por instalação: é a
+# PÁGINA do agente no Agent Index, a mesma para todo mundo que instalar o
+# RadaR. O Índice aceita uso da chave de qualquer instalador sobre um agente já
+# registrado, e cada cópia sorteia o próprio id de instalação — é assim que
+# instalação e uso somam na mesma página.
+#
+#     https://aiworthusing.com/agent-index/radar
+#
+# ELE MORA AQUI, E NÃO NO `compose.yml`, POR UM MOTIVO MEDIDO EM 17/09: um
+# deploy de nuvem (`plow-agents deploy <imagem>@sha --line ln_xxx`) NÃO roda o
+# `compose.yml` — sobe a imagem numa VM da Plow, com o ambiente do
+# provisionador. Medido dentro da imagem construída: sem esta linha o
+# `AGENT_ID` chega VAZIO, o reporter dorme, e o agente funciona perfeitamente
+# enquanto o placar não vê nada. É o critério 3 do portão, e é o que não dá
+# erro nem aparece em log. O provisionador ainda pode sobrescrever.
+ENV AGENT_ID=radar
+
 # O CLIENT É BUSCADO NO BUILD, PINADO POR SHA E CONFERIDO POR SHA256 — as duas
 # metades importam e o upstream escreveu por quê: o sha impede que código não
 # revisado entre por baixo de um agente que segura credencial viva; a soma

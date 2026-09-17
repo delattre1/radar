@@ -11,24 +11,22 @@
 services:
   agent:
     build: .
-    environment:
-      # PARA QUEM ESTE INSTALL REPORTA. Nao e segredo e nao e por instalacao:
-      # e a PAGINA do agente no Agent Index, a mesma para todo mundo que
-      # instalar o RadaR. O Indice aceita uso da chave de qualquer instalador
-      # sobre um agente ja registrado, e cada copia sorteia o proprio id de
-      # instalacao — e assim que instalacao e uso somam na mesma pagina.
-      #
-      #     https://aiworthusing.com/agent-index/radar
-      #
-      # Quem quiser rodar sem aparecer no placar apaga esta linha: o servico
-      # entao se recusa a chutar um nome e fica parado, de proposito.
-      AGENT_ID: radar
+    # O `AGENT_ID` NÃO MORA MAIS AQUI: mora no `Dockerfile`, assado na imagem.
+    # Um deploy de nuvem não roda este arquivo — sobe a imagem sozinha, com o
+    # ambiente do provisionador —, e um `AGENT_ID` que só existisse aqui não
+    # chegaria lá. O agente funcionaria e o placar não veria nada.
+    #
+    # A CREDENCIAL ENTRA PELO AMBIENTE, não mais por monte. A base parou de
+    # promover `/var/lib/plow/credentials.host` no commit b78250e: quem
+    # continuar montando fica sem credencial nenhuma e o `plow-init` estaciona.
+    # Esta é a forma do `compose.example.yml` publicado pela Plow.
+    #
+    # Esta continua sendo a ÚNICA credencial que o contêiner vê. A credencial
+    # da CONTA vive fora desta pasta e nunca entra aqui.
+    env_file:
+      - path: ./plow-credentials
+        required: false
     volumes:
-      # `.host`: a imagem copia o arquivo para o lugar definitivo como root, então
-      # a propriedade dele aqui no disco do Windows não importa.
-      # Esta é a ÚNICA credencial que o contêiner vê. A credencial da CONTA vive
-      # fora desta pasta e nunca entra aqui.
-      - ./plow-credentials:/var/lib/plow/credentials.host:ro
       # A casa do agente, preservada entre `up` e `down` — sessões e configuração.
       #
       # Uma edição na persona NÃO precisa de `down -v`: o `plow-init` compõe a
