@@ -121,7 +121,10 @@ PERIODS = {
     "manha": 9, "manhazinha": 9, "morning": 9,
     "meio-dia": 12, "meio dia": 12, "almoco": 12, "noon": 12,
     "tarde": 14, "afternoon": 14,
-    "noite": 20, "evening": 20, "night": 20,
+    "noite": 20, "evening": 20, "night": 20, "tonight": 20,
+    # Bare "noite" resolved and bare "tonight" asked, which is the asymmetry
+    # this table exists to avoid. `\b` keeps "night" out of "midnight".
+    "midnight": 0, "midday": 12,
 }
 
 
@@ -158,6 +161,19 @@ def resolve_zone(requested=None):
     return local.tzinfo, str(local.tzname() or local.utcoffset()), "server"
 
 
+# The read-back stamp. It is deliberately NOT a phrase in any language, and
+# deliberately NOT day/month.
+#
+# It used to be "%d/%m as %H:%M". Two defects, found 17/09/2026:
+# `as` is a Portuguese word handed to whoever installs this, and day/month
+# flips silently for an American reader -- "05/09" is 5 September here and
+# 9 May there, and the reminder fires on the date this skill exists to get
+# right. Year-first is ambiguous to nobody and belongs to no language.
+#
+# The agent restates this in the person's own words and date convention. This
+# is machine output, not a sentence to paste.
+HUMAN_FORMAT = "%Y-%m-%d %H:%M"
+
 ZONE_NOTE = {
     "person": None,
     "installer": "fuso nao confirmado com a pessoa: usei %s, o que o instalador configurou",
@@ -167,13 +183,27 @@ ZONE_NOTE = {
 
 def find_time(text):
     """Return (hour, minute, source) or None. Never invents a time."""
+    # A leading `\b` demands a word boundary between "3" and "pm", and a digit
+    # beside a letter is not one. Measured 17/09/2026: "3pm" resolved to 03:00
+    # while "3 pm" resolved to 15:00 -- twelve hours apart, exit 0, nothing in
+    # `assumed`, and the attached form is how English is normally written. The
+    # lookbehind takes the digit and still refuses "amanha" and "vieram".
+    #
+    # The English markers sat empty next to four Portuguese ones, so "friday at
+    # 3pm" and "tonight at 8" both landed in the morning.
     ampm = None
-    if re.search(r"\b(pm|da tarde|a tarde|da noite|a noite)\b", text):
+    if re.search(
+        r"(?<![a-z])(pm|tonight|afternoon|evening|da tarde|a tarde|da noite|a noite)\b",
+        text,
+    ):
         ampm = "pm"
-    elif re.search(r"\b(am|da manha|de manha)\b", text):
+    elif re.search(r"(?<![a-z])(am|morning|da manha|de manha)\b", text):
         ampm = "am"
 
-    match = re.search(r"\b(\d{1,2})\s*[:h]\s*(\d{2})\b", text)
+    # Trailing `(?!\d)` rather than `\b`, for the same reason: "3:30pm" ended
+    # the match at "30" against a following "p", fell through to the branch
+    # below, and kept the hour while throwing the minutes away.
+    match = re.search(r"\b(\d{1,2})\s*[:h]\s*(\d{2})(?!\d)", text)
     if match:
         hour, minute = int(match.group(1)), int(match.group(2))
     else:
@@ -260,7 +290,7 @@ def resolve(phrase, now, zone_name=None, zone_source="server"):
                 "schedule": "in %dm" % minutes,
                 "kind": "once",
                 "run_at": moment.isoformat(),
-                "human": moment.strftime("%d/%m as %H:%M"),
+                "human": moment.strftime(HUMAN_FORMAT),
                 "now": now.isoformat(),
                 "zone": zone_name,
                 "zone_source": zone_source,
@@ -349,7 +379,7 @@ def finish(moment, now, context, text):
         "schedule": moment.isoformat(),
         "kind": "once",
         "run_at": moment.isoformat(),
-        "human": moment.strftime("%d/%m as %H:%M"),
+        "human": moment.strftime(HUMAN_FORMAT),
         "now": now.isoformat(),
         "zone": context["zone"],
         "zone_source": context["zone_source"],

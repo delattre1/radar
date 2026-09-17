@@ -27,8 +27,8 @@ assumed.
   ("amanhã às 9", "em 20 minutos", "sexta à tarde", "in two hours").
 - A photo or a voice message arrives with a commitment inside it.
 - **Someone calls off, moves, or asks about something already set** — "deixa pra
-  lá o do dentista", "adia os Correios pra amanhã", "o que você tem marcado?",
-  "guarda esse aí por enquanto". See *Changing what is already set*.
+  lá o do dentista", "adia os Correios pra amanhã", "never mind the dentist
+  one", "what do I have set?". See *Changing what is already set*.
 
 Do **not** use it for recurring routines ("every morning", "toda segunda").
 This skill only ever creates one-shot jobs; a routine is a different shape.
@@ -146,12 +146,27 @@ step 5, in their words — may break that silence.
    The `prompt` is spoken later, to someone who has lost the context. Write it
    so it stands on its own: the thing, and enough of the why to act on.
 
+   **It opens with the thing. No preamble, in any language.** Not "this is the
+   reminder you asked for", not a greeting. They know they asked.
+
+       WRONG   This é o lembrete que você pediu: levar a encomenda aos
+               Correios agora! 📦
+       RIGHT   Levar a encomenda aos Correios agora! 📦
+
+   That wrong line is real: it went out on 16/09/2026 and reached this
+   project's public demo image. **The English word sits in the preamble, never
+   in the thing** — the thing is the person's own words, the preamble is the
+   part written from nothing, in the language of whatever was last read. This
+   file. A reminder with no preamble has nowhere to leak.
+
    **Write the `prompt` in the person's language, not in yours and not in this
    file's.** The reminder turn runs with no conversation history — it sees this
    text and nothing else, so a prompt written in English produces a reminder in
    English no matter what language the person used. Measured 14/09/2026: a
    Portuguese request produced an English `prompt`, which produced an English
-   reminder.
+   reminder. **This is not a rule about Portuguese** — whoever writes in
+   English gets English, in German gets German. Follow the person, never a
+   language this file or this house happens to use.
 
    **What that turn says is the whole message.** This house sets
    `cron.wrap_response: false`, so there is no header, no job id and no footer
@@ -169,8 +184,10 @@ step 5, in their words — may break that silence.
    The second one alone was the whole answer. When a reply has two paragraphs
    and the first explains the mechanism, the first is not part of the answer.
 
-Answer in the language the person wrote in. Do not switch to English because
-this file is in English.
+   **`["human"]`, `["assumed"]` and `["ask"]` are machine output — a bare
+   `2026-09-18 09:00` and a fixed Portuguese note. Restate them; never paste
+   them.** Say the date the way the person writes dates, and the note in their
+   language.
 
 ### Changing what is already set
 
@@ -180,11 +197,11 @@ pra lá*, *adia pra amanhã*, *o que eu tenho marcado?*. All of it is the same
 
 | They say | Action | What it does |
 |---|---|---|
-| "deixa pra lá", "cancela" | `remove` | gone, permanently |
-| "adia pra amanhã", "muda pra 9h" | `update` with a new `schedule` | keeps the job and its text, rearms it |
-| "guarda esse por enquanto" | `pause` | stays, stops firing |
-| "volta aquele do dentista" | `resume` | fires again |
-| "o que você tem marcado?" | `list` | everything, to read back |
+| "deixa pra lá", "never mind", "cancel that" | `remove` | gone, permanently |
+| "adia pra amanhã", "push it to friday", "make it 9" | `update` with a new `schedule` | keeps the job and its text, rearms it |
+| "guarda esse por enquanto", "hold that one for now" | `pause` | stays, stops firing |
+| "volta aquele do dentista", "bring back the dentist one" | `resume` | fires again |
+| "o que você tem marcado?", "what do I have set?" | `list` | everything, to read back |
 | — | `run` | fires now; see the pitfall below |
 
 **Rule one: always `list` first, and never guess a job id.** The tool says so
@@ -258,8 +275,7 @@ action name, no report that a tool ran.
 - **`remove` has no undo, and it is not the same as `pause`.** "Deixa pra lá"
   usually is a cancel and `remove` is right. "Guarda isso por enquanto" is not —
   that is `pause`, and removing it throws away text the person wrote.
-- **Narrating the gear reads as a different product.** Nothing is wrong except
-  that the person was shown the inside of the skill — and that is the whole
+- **Narrating the gear reads as a different product**, and it is the whole
   first impression of whoever installs this. A tool, a step, an exit code and a
   job id are yours; the moment and the thing are theirs.
 
@@ -276,15 +292,8 @@ To check the resolver itself, without touching the scheduler:
     python3 scripts/quando.py "amanha as 9" --tz America/Sao_Paulo \
         --now "2026-09-13T19:00:00-03:00"
 
-must print `2026-09-14T09:00:00-03:00` and exit 0. The same words in another
-zone must give another instant:
-
-    python3 scripts/quando.py "tomorrow at 9" --tz America/Los_Angeles \
-        --now "2026-10-31T19:00:00-07:00"
-
-must print `2026-11-01T09:00:00-08:00` — the offset changes across the
-daylight-saving boundary while the wall clock stays at 9. And
-
-    python3 scripts/quando.py "preciso ir no correio" --tz America/Sao_Paulo
-
-must exit 2 with a question rather than inventing a deadline.
+must print `2026-09-14T09:00:00-03:00` and exit 0. The zone is not decoration:
+the same words in `America/Los_Angeles` give a different instant, and different
+again across a daylight-saving boundary, while the wall clock stays at 9. A
+phrase carrying no time at all must exit 2 with a question rather than a date.
+All three are asserted in `tests/skills/test_lembrete_skill.py`.
