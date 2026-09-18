@@ -10,11 +10,27 @@ Whose clock?
     order, and the answer is always reported back in "zone" / "zone_source":
 
         1. --tz          the person's zone, as the agent discovered it
-        2. HERMES_TIMEZONE   whatever the installer configured
-        3. the server's own zone   -- a fallback, flagged as one
+        2. the store     the same answer, remembered from an earlier run
+        3. HERMES_TIMEZONE   whatever the installer configured
+        4. the server's own zone   -- a fallback, and never a silent one
 
-    Anything but (1) is announced in "assumed" whenever a wall clock is
-    involved, so the agent can confirm it instead of quietly being hours off.
+    A wall clock that lands on (3) or (4) EXITS 2 and asks. That is the whole
+    point: on 2026-09-17 a reminder was set four hours late because the agent
+    was told the zone came from the server and carried on anyway. A note it
+    can skip is not a guard. Refusing to return a schedule is.
+
+REMEMBERING IS NOT THE AGENT'S JOB
+    When (1) resolves, this script writes the zone to the store itself. The
+    next run finds it without being told, and without the agent having to
+    decide to save anything. Forgetting stops being an available action.
+    One install, one person, one file -- reminders are a DM thing.
+
+THE READ-BACK
+    Every resolved wall clock returns three numbers: "agora" (their clock,
+    right now), "human" (the moment) and "daqui" (the gap). They are given
+    together because only the first can be checked by a person who is not
+    doing arithmetic: they glance at their phone. If the zone is wrong all
+    three move together, and "agora" is what gives it away.
 
 Usage:
     python3 quando.py "amanha as 9" --tz America/Sao_Paulo
@@ -139,6 +155,47 @@ def normalize(text):
     return re.sub(r"\s+", " ", text)
 
 
+def store_path():
+    """Where the person's zone is remembered between runs.
+
+    Under HERMES_HOME, which is the volume: it survives restarts and rebuilds.
+    LEMBRETE_STORE overrides it, which is how the tests stay out of the real
+    one.
+    """
+    override = (os.environ.get("LEMBRETE_STORE") or "").strip()
+    if override:
+        return override
+    home = (os.environ.get("HERMES_HOME") or "/var/lib/hermes").strip()
+    return os.path.join(home, "lembrete-fuso.json")
+
+
+def store_read():
+    """The remembered zone, or None. A broken store is a missing store."""
+    try:
+        with open(store_path(), encoding="utf-8") as handle:
+            zone = (json.load(handle) or {}).get("zone")
+    except Exception:
+        return None
+    return zone.strip() if isinstance(zone, str) and zone.strip() else None
+
+
+def store_write(zone):
+    """Remember the zone. Best effort: a read-only disk must not cost the
+    person their reminder -- they just get asked again next time."""
+    if store_read() == zone:
+        return
+    try:
+        path = store_path()
+        parent = os.path.dirname(path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            json.dump({"zone": zone}, handle, ensure_ascii=False)
+            handle.write("\n")
+    except Exception:
+        pass
+
+
 def resolve_zone(requested=None):
     """Return (tzinfo, name, source). Never raises on a bad zone name."""
     if requested:
@@ -146,9 +203,22 @@ def resolve_zone(requested=None):
             try:
                 return ZoneInfo(requested), requested, "person"
             except Exception:
-                pass  # Fall through; the bad name is reported by the caller.
+                # A zone WAS named and is not real. That is a question, not a
+                # cue to reach for the stored one: substituting an old answer
+                # here would report someone else's guess as "person" and hide
+                # the typo that caused it. The caller turns this into a 2.
+                return None, requested, "unknown"
         else:
             return None, requested, "unavailable"
+
+    # Asked once, months ago, and still theirs. Same standing as --tz: the
+    # answer came from the person, only the run that heard it is over.
+    remembered = store_read()
+    if remembered and ZoneInfo is not None:
+        try:
+            return ZoneInfo(remembered), remembered, "person"
+        except Exception:
+            pass  # A zone that stopped existing is not worth failing over.
 
     configured = (os.environ.get("HERMES_TIMEZONE") or "").strip()
     if configured and ZoneInfo is not None:
@@ -285,13 +355,28 @@ def resolve(phrase, now, zone_name=None, zone_source="server"):
             # Handed to cron as "in Nm": it fires ONCE. A bare "30m" would
             # mean EVERY 30 minutes -- not the same thing.
             moment = now + timedelta(minutes=minutes)
+            told = zone_source == "person"
+            # A relative delay needs no zone TO SCHEDULE, and that was read for
+            # years as needing no zone at all. It does need one to be SPOKEN.
+            # Found 2026-09-17: on a server in UTC, "daqui a 10 minutos" at
+            # 23:49 for someone in Sao Paulo came back human "2026-09-18 02:59"
+            # -- and step 8 tells the agent to read ["human"] back. The moment
+            # is right, the sentence is three hours wrong, and nothing flags it
+            # because zone_matters is False.
+            #
+            # So the wall clock is only published when it is THEIRS. Otherwise
+            # the read-back is "daqui", which is what they said anyway and is
+            # true on every clock on earth.
             return {
                 "ok": True,
                 "schedule": "in %dm" % minutes,
                 "kind": "once",
                 "run_at": moment.isoformat(),
-                "human": moment.strftime(HUMAN_FORMAT),
+                "human": moment.strftime(HUMAN_FORMAT) if told else None,
                 "now": now.isoformat(),
+                "agora": now.strftime(HUMAN_FORMAT) if told else None,
+                "daqui": "%d:%02d" % divmod(minutes, 60),
+                "daqui_minutos": minutes,
                 "zone": zone_name,
                 "zone_source": zone_source,
                 "zone_matters": False,
@@ -374,6 +459,7 @@ def finish(moment, now, context, text):
             "O momento resolvido (%s) ja passou." % moment.isoformat(),
             "Isso ja passou. Voce quer marcar para quando?",
         )
+    gap = int((moment - now).total_seconds()) // 60
     return {
         "ok": True,
         "schedule": moment.isoformat(),
@@ -381,6 +467,12 @@ def finish(moment, now, context, text):
         "run_at": moment.isoformat(),
         "human": moment.strftime(HUMAN_FORMAT),
         "now": now.isoformat(),
+        # The three that go back to the person, together. "agora" is their own
+        # clock: the only one they can check without doing arithmetic, and so
+        # the only one that catches a wrong zone by itself.
+        "agora": now.strftime(HUMAN_FORMAT),
+        "daqui": "%d:%02d" % divmod(gap, 60),
+        "daqui_minutos": gap,
         "zone": context["zone"],
         "zone_source": context["zone_source"],
         "zone_matters": True,
@@ -420,6 +512,32 @@ def main(argv=None):
     now = now.replace(second=0, microsecond=0)
 
     result, ok = resolve(args.phrase, now, zone_name, zone_source)
+
+    # THE GUARD. A wall clock on anyone's zone but the person's does not come
+    # back as a schedule with a note attached -- it comes back as a question.
+    #
+    # The note existed before this and was ignored: on 2026-09-17 the agent was
+    # handed zone_source "server" plus a written warning, said "te aviso amanha
+    # as 9h", and set it four hours late in a zone the person had never been
+    # asked about. Nothing was broken and nothing was logged. A rule the caller
+    # can read past is not a guard; withholding the schedule is, because there
+    # is then nothing to create the job with.
+    if ok and result.get("zone_matters") and result.get("zone_source") != "person":
+        json.dump({
+            "ok": False,
+            "reason": "Hora de relogio sem o fuso da pessoa (usaria %s, fonte: %s)."
+                      % (result.get("zone"), result.get("zone_source")),
+            "ask": "Em que lugar do mundo voce esta?",
+        }, sys.stdout, ensure_ascii=False, indent=2)
+        sys.stdout.write("\n")
+        return 2
+
+    # Remembering is a side effect of resolving, never a decision. Only a zone
+    # that came from the person on THIS run is worth writing: one read back
+    # from the store would just be rewritten as itself.
+    if ok and args.tz and zone_source == "person":
+        store_write(zone_name)
+
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
     return 0 if ok else 2

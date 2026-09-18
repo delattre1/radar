@@ -113,13 +113,20 @@ step 5, in their words — may break that silence.
    guaranteed to be in their language, and it is not guaranteed to be about
    what they meant.
 
-3. **Know whose clock it is, before resolving a wall-clock time.** Use the zone
-   you already learned from this person. If you have never learned it, ask once
-   — "what time zone are you in?" — and remember the answer for next time. Do
-   not ask again, and do not fall back to the server's zone in silence. A
-   relative delay skips this step entirely: it needs no zone — which is yours
-   to work out, never to explain. "Fuso horário", "delay" and "relativo" are
-   not words the person hears unless you are asking them the question above.
+3. **Know whose clock it is, before resolving a wall-clock time.** You do not
+   have to remember it: once a zone has been passed with `--tz`, the resolver
+   keeps it and finds it by itself on every later run. Run step 4 first and
+   see what comes back.
+
+   **If it comes back exit 2 asking where they are, read
+   `references/fuso.md`** — a place instead of a zone, turned into one with
+   `maps`. Once per person, ever. **Never fill `--tz` with a guess of your
+   own:** it is recorded as the person's own answer and defeats the check.
+
+   **A relative delay skips this step entirely:** it needs no zone — which is
+   yours to work out, never to explain. "Fuso horário", "delay" and "relativo"
+   are not words the person hears unless you are asking them the question
+   above.
 
 4. **Run the resolver** on whatever the person said about when, passing `--tz`.
    Silent too: no "vou criar o lembrete", no "deixa eu verificar".
@@ -184,6 +191,19 @@ step 5, in their words — may break that silence.
    The second one alone was the whole answer. When a reply has two paragraphs
    and the first explains the mechanism, the first is not part of the answer.
 
+   **Three numbers go back, always and together** — `["agora"]`, `["human"]`,
+   `["daqui"]`:
+
+       "São 23:32 aí agora. Te aviso amanhã às 9h, daqui a 9h28."
+
+   **`["agora"]` is the one that matters and the one you will drop.** The
+   moment is their own words returning and cannot sound wrong to them; the gap
+   needs arithmetic nobody does. Their own clock they check by glancing at
+   their phone, and a wrong zone moves all three at once.
+
+   **When `["human"]` and `["agora"]` are `null`**, say `["daqui"]` and no
+   wall-clock time: an hour invented there would be the server's.
+
    **`["human"]`, `["assumed"]` and `["ask"]` are machine output — a bare
    `2026-09-18 09:00` and a fixed Portuguese note. Restate them; never paste
    them.** Say the date the way the person writes dates, and the note in their
@@ -202,7 +222,7 @@ pra lá*, *adia pra amanhã*, *o que eu tenho marcado?*. All of it is the same
 | "guarda esse por enquanto", "hold that one for now" | `pause` | stays, stops firing |
 | "volta aquele do dentista", "bring back the dentist one" | `resume` | fires again |
 | "o que você tem marcado?", "what do I have set?" | `list` | everything, to read back |
-| — | `run` | fires now; see the pitfall below |
+| — | `run` | fires now; see `references/cronjob.md` |
 
 **Rule one: always `list` first, and never guess a job id.** The tool says so
 itself. `job_id` is required by every action except `list`, and it accepts a
@@ -237,44 +257,25 @@ action name, no report that a tool ran.
 
 ## Pitfalls
 
-- **An omitted `deliver` is not a default — it is a silent drop.** It stores as
-  `"local"`, and a local job runs, saves its output, and delivers nowhere. The
-  origin is captured and stored either way, but it is never consulted unless the
-  token `origin` is in `deliver`.
-- **`"2h"` means *every* two hours, not *in* two hours.** One-shot by duration
-  is `"in 2h"`. The resolver never emits the bare form.
+- **The mechanics of `cronjob` have their own traps** — a dropped `deliver`, a
+  job that recurs instead of firing once, a paused job that will not rearm.
+  They are in `references/cronjob.md`, to read when a job behaves oddly.
 - **A naive timestamp is anchored to the configured Hermes zone**, which may not
   be the person's. Always pass the offset-carrying stamp the resolver returns.
-- **The server's zone is not the person's zone, and it is nobody's by default.**
-  A container with nothing configured runs in UTC. Scheduling "9am" there sends
-  a reminder at 9am UTC — 6am in São Paulo, 1am in California. This is the
-  failure that looks like success: the job fires, the log says delivered, and
-  the person is simply woken at the wrong hour.
-- **Daylight saving moves the wall clock under you.** Most of the United States
-  still changes twice a year. Pass the IANA zone name — `America/Los_Angeles`,
-  not a fixed `-08:00` — so the offset is computed for the target date, not
-  today's.
+- **The server's zone is nobody's, and the resolver now REFUSES rather than
+  warning.** A wall clock on any zone but the person's exits 2 and asks, so the
+  old failure — job fires, log says delivered, person woken at the wrong hour —
+  has no path left. `references/fuso.md` is how you answer it.
+- **Daylight saving moves the wall clock under you.** Pass the IANA zone name —
+  `America/Los_Angeles`, not a fixed `-08:00` — so the offset is computed for
+  the target date, not today's. `maps` returns the IANA name already.
 - **A time that already passed is not a reminder.** The resolver refuses it
   rather than scheduling something that can never fire.
 - **A weekday name said on that same weekday means next week.** The resolver
   says so in `["assumed"]`; pass that on rather than quietly moving the date.
-- **A voice message may arrive already transcribed, translated, and wrong**, and
-  the original audio is not kept. There is nothing to recover from later — the
-  read-back carried by the step 8 confirmation is the only defence.
-- **Rescheduling a PAUSED job does not wake it up.** `update` rearms a job when
-  it sets a new `schedule` — `state` back to `scheduled`, `enabled` true — but
-  it checks first, and a job whose state is `paused` is left paused. The date
-  moves and nothing ever fires. Read this in the source, 15/09/2026:
-  `if job.get("state") != "paused"`. If someone postpones something they had
-  parked, `resume` it too, and say it landed.
-- **`run` fires in the background and returns immediately.** It hands back a
-  handle, and the outcome re-enters the conversation on its own when the job is
-  done. Do not wait for it, do not poll it, and do not tell the person it has
-  already been delivered. It is for testing a reminder, not for delivering one
-  early — early delivery is `update` with a sooner time.
-- **`remove` has no undo, and it is not the same as `pause`.** "Deixa pra lá"
-  usually is a cancel and `remove` is right. "Guarda isso por enquanto" is not —
-  that is `pause`, and removing it throws away text the person wrote.
+- **A voice message may arrive already transcribed, translated, and wrong.** The
+  original audio is kept under `cache/audio/` and can be reopened, but the step
+  8 read-back is what catches it while it still matters.
 - **Narrating the gear reads as a different product**, and it is the whole
   first impression of whoever installs this. A tool, a step, an exit code and a
   job id are yours; the moment and the thing are theirs.

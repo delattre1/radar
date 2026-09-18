@@ -19,9 +19,12 @@ moves the wall clock twice a year. A reminder an hour off is a broken reminder.
 
 import importlib.util
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
@@ -286,6 +289,89 @@ class CommandLineContract(unittest.TestCase):
         payload = json.loads(done.stdout)
         self.assertFalse(payload["ok"])
         self.assertIn("?", payload["ask"])
+
+
+class TheGuardAndTheMemory(unittest.TestCase):
+    """The 2026-09-17 defect, and the two things that stop it repeating.
+
+    What happened: someone asked for "amanha as 9" on an instance running in
+    Pacific. The resolver said the zone came from the server and said so in
+    `assumed`. The agent scheduled it anyway and answered "te aviso amanha as
+    9h" -- four hours off, with nothing broken and nothing logged.
+
+    A note the caller can read past is not a guard. These check the two that
+    do not depend on anyone choosing to obey: the schedule is WITHHELD, and
+    the answer is REMEMBERED by the script rather than by the agent.
+    """
+
+    def setUp(self):
+        self.store = Path(tempfile.mkdtemp()) / "fuso.json"
+
+    def tearDown(self):
+        shutil.rmtree(self.store.parent, ignore_errors=True)
+
+    def run_cli(self, *args):
+        env = dict(os.environ)
+        env["LEMBRETE_STORE"] = str(self.store)
+        env.pop("HERMES_TIMEZONE", None)   # the installer must not stand in
+        return subprocess.run(
+            [sys.executable, str(RESOLVER), *args],
+            capture_output=True, text=True, env=env,
+        )
+
+    def test_a_wall_clock_nobody_named_a_zone_for_is_refused(self):
+        """The whole point: no schedule comes back, so none can be created."""
+        done = self.run_cli("amanha as 9")
+        self.assertEqual(done.returncode, 2)
+        payload = json.loads(done.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertNotIn("schedule", payload)
+        self.assertIn("?", payload["ask"])
+
+    def test_the_zone_is_remembered_without_the_agent_deciding_to_save_it(self):
+        first = self.run_cli("amanha as 9", "--tz", BR)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.assertEqual(json.loads(self.store.read_text())["zone"], BR)
+
+        # Same question, no --tz, a run later. It must not ask again, and the
+        # answer still belongs to the person -- not to the server.
+        again = self.run_cli("amanha as 9")
+        self.assertEqual(again.returncode, 0, again.stderr)
+        payload = json.loads(again.stdout)
+        self.assertEqual(payload["zone"], BR)
+        self.assertEqual(payload["zone_source"], "person")
+        self.assertEqual(payload["assumed"], [])
+
+    def test_a_corrupt_store_asks_rather_than_guessing(self):
+        self.store.write_text("{not json at all")
+        self.assertEqual(self.run_cli("amanha as 9").returncode, 2)
+
+    def test_a_resolved_wall_clock_carries_the_three_read_back_numbers(self):
+        done = self.run_cli("amanha as 9", "--tz", BR,
+                            "--now", "2026-09-13T19:00:00-03:00")
+        payload = json.loads(done.stdout)
+        self.assertEqual(payload["agora"], "2026-09-13 19:00")
+        self.assertEqual(payload["human"], "2026-09-14 09:00")
+        self.assertEqual(payload["daqui"], "14:00")
+
+    def test_a_relative_delay_publishes_no_wall_clock_it_cannot_vouch_for(self):
+        """Found while building the guard, and wider than the bug we chased.
+
+        A delay needs no zone to SCHEDULE, so `zone_matters` is False and
+        nothing was ever flagged -- but `human` was still rendered in the
+        server's zone, and step 8 tells the agent to read `human` back. On a
+        UTC server that is a sentence three hours wrong about a reminder that
+        fires correctly.
+        """
+        blind = json.loads(self.run_cli("daqui a 10 minutos").stdout)
+        self.assertIsNone(blind["human"])
+        self.assertIsNone(blind["agora"])
+        self.assertEqual(blind["daqui"], "0:10")   # true on every clock
+
+        told = json.loads(self.run_cli("daqui a 10 minutos", "--tz", BR,
+                                       "--now", "2026-09-13T19:00:00-03:00").stdout)
+        self.assertEqual(told["agora"], "2026-09-13 19:00")
+        self.assertEqual(told["human"], "2026-09-13 19:10")
 
 
 if __name__ == "__main__":
