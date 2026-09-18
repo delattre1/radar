@@ -291,17 +291,11 @@ class CommandLineContract(unittest.TestCase):
         self.assertIn("?", payload["ask"])
 
 
-class TheGuardAndTheMemory(unittest.TestCase):
-    """The 2026-09-17 defect, and the two things that stop it repeating.
+class StoreFixture(unittest.TestCase):
+    """A resolver run against a throwaway store, never the real one.
 
-    What happened: someone asked for "amanha as 9" on an instance running in
-    Pacific. The resolver said the zone came from the server and said so in
-    `assumed`. The agent scheduled it anyway and answered "te aviso amanha as
-    9h" -- four hours off, with nothing broken and nothing logged.
-
-    A note the caller can read past is not a guard. These check the two that
-    do not depend on anyone choosing to obey: the schedule is WITHHELD, and
-    the answer is REMEMBERED by the script rather than by the agent.
+    The installer's zone is unset on purpose: it must never stand in for a
+    person, and leaving it set would hide the very rung being tested.
     """
 
     def setUp(self):
@@ -313,11 +307,25 @@ class TheGuardAndTheMemory(unittest.TestCase):
     def run_cli(self, *args):
         env = dict(os.environ)
         env["LEMBRETE_STORE"] = str(self.store)
-        env.pop("HERMES_TIMEZONE", None)   # the installer must not stand in
+        env.pop("HERMES_TIMEZONE", None)
         return subprocess.run(
             [sys.executable, str(RESOLVER), *args],
             capture_output=True, text=True, env=env,
         )
+
+
+class TheGuardAndTheMemory(StoreFixture):
+    """The 2026-09-17 defect, and the two things that stop it repeating.
+
+    What happened: someone asked for "amanha as 9" on an instance running in
+    Pacific. The resolver said the zone came from the server and said so in
+    `assumed`. The agent scheduled it anyway and answered "te aviso amanha as
+    9h" -- four hours off, with nothing broken and nothing logged.
+
+    A note the caller can read past is not a guard. These check the two that
+    do not depend on anyone choosing to obey: the schedule is WITHHELD, and
+    the answer is REMEMBERED by the script rather than by the agent.
+    """
 
     def test_a_wall_clock_nobody_named_a_zone_for_is_refused(self):
         """The whole point: no schedule comes back, so none can be created."""
@@ -372,6 +380,100 @@ class TheGuardAndTheMemory(unittest.TestCase):
                                        "--now", "2026-09-13T19:00:00-03:00").stdout)
         self.assertEqual(told["agora"], "2026-09-13 19:00")
         self.assertEqual(told["human"], "2026-09-13 19:10")
+
+
+class TheNumberAnswersBeforeAnyoneIsAsked(StoreFixture):
+    """The first message is the hard one: nothing is remembered and nothing
+    has been said. Their own area code is the only thing that exists, and it
+    is enough -- 2026-09-17's four-hour miss was a `+55 24` number the agent
+    never looked at.
+
+    Asking is the LAST rung, not the first. These pin that order down, and
+    pin down the one thing that must never invert: what she SAID beats what
+    her number implies, permanently.
+    """
+
+    VOLTA_REDONDA = "+5524999990000"
+    SAN_FRANCISCO = "+14155550123"
+    AUSTRALIAN = "+61412345678"        # a mobile carries no region at all
+    TORONTO = "+14165550123"           # +1, and deliberately not in the table
+
+    def test_the_first_message_resolves_without_asking_anything(self):
+        done = self.run_cli("amanha as 9", "--handle", self.VOLTA_REDONDA)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        payload = json.loads(done.stdout)
+        self.assertEqual(payload["zone"], BR)
+        self.assertEqual(payload["zone_source"], "inferido")
+        self.assertIn("schedule", payload)
+
+    def test_the_four_brazilian_zones_come_out_of_the_right_ddds(self):
+        for handle, zone in (
+            ("+5511999990000", "America/Sao_Paulo"),
+            ("+5592999990000", "America/Manaus"),
+            ("+5568999990000", "America/Rio_Branco"),
+            ("+5565999990000", "America/Cuiaba"),
+        ):
+            with self.subTest(handle=handle):
+                got = json.loads(self.run_cli("amanha as 9", "--handle", handle).stdout)
+                self.assertEqual(got["zone"], zone)
+
+    def test_an_american_area_code_resolves_too(self):
+        got = json.loads(self.run_cli("tomorrow at 9", "--handle",
+                                      self.SAN_FRANCISCO).stdout)
+        self.assertEqual(got["zone"], "America/Los_Angeles")
+
+    def test_a_number_that_cannot_say_still_asks_rather_than_guessing(self):
+        """An Australian mobile has no region in it, and a Canadian code is
+        kept out of a US table on purpose. Both fall through to the question
+        -- which is what the question is FOR."""
+        for handle in (self.AUSTRALIAN, self.TORONTO):
+            with self.subTest(handle=handle):
+                done = self.run_cli("amanha as 9", "--handle", handle)
+                self.assertEqual(done.returncode, 2)
+                self.assertNotIn("schedule", json.loads(done.stdout))
+
+    def test_a_silent_number_still_delivers_a_window(self):
+        """The question is for wall clocks. A delay needs no zone at all, and
+        a stranger asking for one must not be interrogated."""
+        done = self.run_cli("daqui a 40 minutos", "--handle", self.AUSTRALIAN)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        payload = json.loads(done.stdout)
+        self.assertEqual(payload["schedule"], "in 40m")
+        self.assertIsNone(payload["human"])
+
+    def test_the_inferred_zone_reaches_the_read_back_on_a_relative_delay(self):
+        """`agora` is the only thing that ever surfaces travel: their number
+        does not move when they do. Dropping it on short requests is how a
+        moved person stays wrong for weeks."""
+        payload = json.loads(self.run_cli(
+            "daqui a 10 minutos", "--handle", self.VOLTA_REDONDA,
+            "--now", "2026-09-13T19:00:00-03:00").stdout)
+        self.assertEqual(payload["agora"], "2026-09-13 19:00")
+
+    def test_the_chain_runs_once_and_is_remembered_with_its_source(self):
+        self.run_cli("amanha as 9", "--handle", self.VOLTA_REDONDA)
+        saved = json.loads(self.store.read_text())
+        self.assertEqual(saved, {"zone": BR, "fonte": "inferido"})
+
+        # No handle a run later: the store answers, still labelled a guess.
+        again = json.loads(self.run_cli("amanha as 9").stdout)
+        self.assertEqual(again["zone_source"], "inferido")
+
+    def test_what_she_said_outranks_her_number_for_good(self):
+        """The inversion this must never make. She corrects the guess once;
+        her number keeps arriving on every later message and must not quietly
+        undo her."""
+        told = json.loads(self.run_cli("amanha as 9", "--handle",
+                                       self.VOLTA_REDONDA,
+                                       "--tz", "America/Manaus").stdout)
+        self.assertEqual(told["zone_source"], "person")
+        self.assertEqual(json.loads(self.store.read_text()),
+                         {"zone": "America/Manaus", "fonte": "person"})
+
+        later = json.loads(self.run_cli("amanha as 9", "--handle",
+                                        self.VOLTA_REDONDA).stdout)
+        self.assertEqual(later["zone"], "America/Manaus")
+        self.assertEqual(later["zone_source"], "person")
 
 
 if __name__ == "__main__":

@@ -4,26 +4,42 @@
 Ground version: standard library only. No key, no network, nothing to install.
 
 Whose clock?
-    A relative delay ("in 20 minutes") has no zone and needs none.
     A wall-clock time ("tomorrow at 9") belongs to the person who said it, and
-    this script never assumes that is the server. The zone is resolved in this
-    order, and the answer is always reported back in "zone" / "zone_source":
+    this script never assumes that is the server. THE ZONE IS WORKED OUT, NOT
+    ASKED FOR. The order below is the order things EXIST -- at first contact
+    the store is empty and she has said nothing, so her number is all there is,
+    and that is exactly the moment this has to work:
 
-        1. --tz          the person's zone, as the agent discovered it
-        2. the store     the same answer, remembered from an earlier run
-        3. HERMES_TIMEZONE   whatever the installer configured
-        4. the server's own zone   -- a fallback, and never a silent one
+        1. --handle      HER NUMBER -> area code -> zone.  "inferido"
+        2. the store     what an earlier run worked out or was told
+        3. --tz          what she said, when she was asked or volunteered it
+        4. the question  ONLY when 1 and 2 came back empty
+        5. HERMES_TIMEZONE / the server   -- never a wall clock, ever
 
-    A wall clock that lands on (3) or (4) EXITS 2 and asks. That is the whole
-    point: on 2026-09-17 a reminder was set four hours late because the agent
-    was told the zone came from the server and carried on anyway. A note it
-    can skip is not a guard. Refusing to return a schedule is.
+    Existing early is not outranking. Her own word, once given, sits above her
+    number forever (see store_write): the area code says where the LINE was
+    issued, her sentence says where SHE is, and a number does not move when
+    she does.
 
-REMEMBERING IS NOT THE AGENT'S JOB
-    When (1) resolves, this script writes the zone to the store itself. The
-    next run finds it without being told, and without the agent having to
-    decide to save anything. Forgetting stops being an available action.
+    A wall clock that reaches (5) EXITS 2 and asks -- and by then there is
+    genuinely nothing left to go on. On 2026-09-17 a reminder was set four
+    hours late because the agent was handed the server's zone plus a written
+    warning and carried on anyway. A note it can skip is not a guard.
+
+THE CHAIN RUNS ONCE, NOT ONCE PER MESSAGE
+    Whatever (1), (2) or (3) resolves is written to the store by this script,
+    with WHERE IT CAME FROM. The next run finds it without being told, and
+    without the agent deciding to save anything -- forgetting stops being an
+    available action, and the number is not re-read on every reminder.
     One install, one person, one file -- reminders are a DM thing.
+
+WHEN SHE TRAVELS
+    Nothing here can see that. There is no location, no GPS, no device clock:
+    her number does not change when she lands somewhere else, and the maps
+    skill converts a PLACE into a zone -- it never says where a person is.
+    What catches it is ["agora"] in the read-back: she is told her own current
+    time in every answer, relative delays included, and a wrong zone is a
+    wrong hour staring back at her from a phone that says otherwise.
 
 THE READ-BACK
     Every resolved wall clock returns three numbers: "agora" (their clock,
@@ -170,19 +186,40 @@ def store_path():
 
 
 def store_read():
-    """The remembered zone, or None. A broken store is a missing store."""
+    """The remembered zone and where it came from, or (None, None).
+
+    A store written before sources were recorded holds a bare "zone". That
+    file was only ever written on the --tz path, so it IS the person's own
+    answer and is read as one.
+    """
     try:
         with open(store_path(), encoding="utf-8") as handle:
-            zone = (json.load(handle) or {}).get("zone")
+            saved = json.load(handle) or {}
     except Exception:
-        return None
-    return zone.strip() if isinstance(zone, str) and zone.strip() else None
+        return None, None
+    zone = saved.get("zone")
+    if not (isinstance(zone, str) and zone.strip()):
+        return None, None
+    source = saved.get("fonte")
+    if source not in ("person", "inferido"):
+        source = "person"
+    return zone.strip(), source
 
 
-def store_write(zone):
-    """Remember the zone. Best effort: a read-only disk must not cost the
-    person their reminder -- they just get asked again next time."""
-    if store_read() == zone:
+def store_write(zone, source):
+    """Remember the zone AND its source. Best effort: a read-only disk must
+    not cost the person their reminder -- the chain just runs again.
+
+    WHAT SHE SAID IS NEVER OVERWRITTEN BY WHAT WAS INFERRED. Her number says
+    where the LINE was issued; her words say where she is. If she has
+    corrected the guess once, every later run reads her correction and the
+    number stops having an opinion -- otherwise the area code would quietly
+    undo her every single time.
+    """
+    known, known_source = store_read()
+    if known == zone and known_source == source:
+        return
+    if known_source == "person" and source != "person":
         return
     try:
         path = store_path()
@@ -190,14 +227,66 @@ def store_write(zone):
         if parent:
             os.makedirs(parent, exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
-            json.dump({"zone": zone}, handle, ensure_ascii=False)
+            json.dump({"zone": zone, "fonte": source}, handle, ensure_ascii=False)
             handle.write("\n")
     except Exception:
         pass
 
 
-def resolve_zone(requested=None):
-    """Return (tzinfo, name, source). Never raises on a bad zone name."""
+def table_path():
+    """The area-code table, beside this script. Data for the code, never text
+    for the model: it is never read into a prompt and costs no context."""
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                        "fusos_por_numero.json")
+
+
+def zone_from_handle(handle):
+    """Her phone number -> her zone, or None when the number cannot say.
+
+    This is the FIRST rung and the only one that exists at first contact:
+    the store is empty and she has said nothing about where she is. It costs
+    her nothing -- no question, no round trip, no network.
+
+    None means the number is silent (unknown country, an area code that
+    straddles two zones, a short code). Silent is not a licence to guess: the
+    caller turns it into the question.
+    """
+    digits = re.sub(r"\D", "", handle or "")
+    if not digits:
+        return None
+    if digits.startswith("00"):
+        digits = digits[2:]
+    try:
+        with open(table_path(), encoding="utf-8") as fh:
+            table = (json.load(fh) or {}).get("paises") or {}
+    except Exception:
+        return None
+    # Longest country code first, so +1 never swallows a longer prefix.
+    for code in sorted(table, key=len, reverse=True):
+        if not digits.startswith(code):
+            continue
+        entry = table[code] or {}
+        width = entry.get("digitos_area") or 0
+        area = digits[len(code):len(code) + width]
+        zone = (entry.get("area") or {}).get(area)
+        if zone and ZoneInfo is not None:
+            try:
+                ZoneInfo(zone)
+                return zone
+            except Exception:
+                return None
+        return None
+    return None
+
+
+def resolve_zone(requested=None, handle=None):
+    """Return (tzinfo, name, source). Never raises on a bad zone name.
+
+    The order is the order things EXIST, not the order they outrank each
+    other -- at first contact the store is empty and nothing was said, so the
+    number is all there is. Her own word, once given, sits above the number
+    forever; see store_write.
+    """
     if requested:
         if ZoneInfo is not None:
             try:
@@ -211,14 +300,25 @@ def resolve_zone(requested=None):
         else:
             return None, requested, "unavailable"
 
-    # Asked once, months ago, and still theirs. Same standing as --tz: the
-    # answer came from the person, only the run that heard it is over.
-    remembered = store_read()
-    if remembered and ZoneInfo is not None:
+    remembered, remembered_source = store_read()
+    # Said by her, on some earlier day. Outranks the number, always.
+    if remembered and remembered_source == "person" and ZoneInfo is not None:
         try:
             return ZoneInfo(remembered), remembered, "person"
         except Exception:
             pass  # A zone that stopped existing is not worth failing over.
+
+    # THE NUMBER. The only rung that exists on the very first message.
+    inferred = zone_from_handle(handle)
+    if inferred:
+        return ZoneInfo(inferred), inferred, "inferido"
+
+    # The same inference, from an earlier run, when the number is not at hand.
+    if remembered and ZoneInfo is not None:
+        try:
+            return ZoneInfo(remembered), remembered, remembered_source
+        except Exception:
+            pass
 
     configured = (os.environ.get("HERMES_TIMEZONE") or "").strip()
     if configured and ZoneInfo is not None:
@@ -244,8 +344,17 @@ def resolve_zone(requested=None):
 # is machine output, not a sentence to paste.
 HUMAN_FORMAT = "%Y-%m-%d %H:%M"
 
+# The two sources that are ALLOWED to produce a wall clock. "person" is what
+# she said; "inferido" is what her own number says. Anything else is the
+# server wearing her clothes, and the guard in main() turns it into a question.
+TRUSTED = ("person", "inferido")
+
 ZONE_NOTE = {
     "person": None,
+    # Not a warning to be obeyed -- one was, and it was walked past. This is a
+    # fact for the agent to carry into the sentence it says out loud, so SHE
+    # can catch it. What actually catches it is ["agora"].
+    "inferido": "fuso deduzido do numero dela (%s), nao confirmado por ela",
     "installer": "fuso nao confirmado com a pessoa: usei %s, o que o instalador configurou",
     "server": "fuso nao confirmado com a pessoa: usei %s, o relogio do servidor",
 }
@@ -355,7 +464,7 @@ def resolve(phrase, now, zone_name=None, zone_source="server"):
             # Handed to cron as "in Nm": it fires ONCE. A bare "30m" would
             # mean EVERY 30 minutes -- not the same thing.
             moment = now + timedelta(minutes=minutes)
-            told = zone_source == "person"
+            told = zone_source in TRUSTED
             # A relative delay needs no zone TO SCHEDULE, and that was read for
             # years as needing no zone at all. It does need one to be SPOKEN.
             # Found 2026-09-17: on a server in UTC, "daqui a 10 minutos" at
@@ -488,10 +597,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("phrase", help="What the person said about when.")
     parser.add_argument("--tz", help="The person's IANA zone, e.g. Europe/Lisbon.")
+    parser.add_argument("--handle", help="Her phone number, e.g. +5524999990000. "
+                                         "Pass it on EVERY run: it is what makes "
+                                         "the first message work without asking.")
     parser.add_argument("--now", help="Override the clock (aware ISO). Testing only.")
     args = parser.parse_args(argv)
 
-    tzinfo, zone_name, zone_source = resolve_zone(args.tz)
+    tzinfo, zone_name, zone_source = resolve_zone(args.tz, args.handle)
     if args.tz and zone_source != "person":
         json.dump({
             "ok": False,
@@ -513,30 +625,34 @@ def main(argv=None):
 
     result, ok = resolve(args.phrase, now, zone_name, zone_source)
 
-    # THE GUARD. A wall clock on anyone's zone but the person's does not come
-    # back as a schedule with a note attached -- it comes back as a question.
+    # THE GUARD, AND IT IS THE LAST RUNG, NOT THE FIRST.
     #
-    # The note existed before this and was ignored: on 2026-09-17 the agent was
-    # handed zone_source "server" plus a written warning, said "te aviso amanha
-    # as 9h", and set it four hours late in a zone the person had never been
-    # asked about. Nothing was broken and nothing was logged. A rule the caller
-    # can read past is not a guard; withholding the schedule is, because there
-    # is then nothing to create the job with.
-    if ok and result.get("zone_matters") and result.get("zone_source") != "person":
+    # It fires only when nothing said where she is: no zone given, nothing
+    # remembered, and a number that cannot answer. Then the hour on offer is
+    # the SERVER'S, and the server is nobody -- on 2026-09-17 that shipped a
+    # reminder four hours late, with a written warning the agent read straight
+    # past. A rule the caller can skip is not a guard; withholding the
+    # schedule is, because there is then nothing to create the job with.
+    #
+    # An hour derived from her own number is NOT this case. It is hers until
+    # she says otherwise, it is labelled "inferido", and the read-back below
+    # puts her own clock in front of her so she can say otherwise.
+    if ok and result.get("zone_matters") and result.get("zone_source") not in TRUSTED:
         json.dump({
             "ok": False,
-            "reason": "Hora de relogio sem o fuso da pessoa (usaria %s, fonte: %s)."
+            "reason": "Hora de relogio sem fuso da pessoa e sem numero que responda "
+                      "(usaria %s, fonte: %s)."
                       % (result.get("zone"), result.get("zone_source")),
             "ask": "Em que lugar do mundo voce esta?",
         }, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
         return 2
 
-    # Remembering is a side effect of resolving, never a decision. Only a zone
-    # that came from the person on THIS run is worth writing: one read back
-    # from the store would just be rewritten as itself.
-    if ok and args.tz and zone_source == "person":
-        store_write(zone_name)
+    # Remembering is a side effect of resolving, never a decision -- and it is
+    # what keeps the chain from running twice. The number is read once, the
+    # answer is kept, and every later message is already answered.
+    if ok and zone_source in TRUSTED:
+        store_write(zone_name, zone_source)
 
     json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")

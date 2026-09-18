@@ -39,34 +39,35 @@ This skill only ever creates one-shot jobs; a routine is a different shape.
 - A turn that came in from a gateway platform, so `deliver="origin"` resolves to
   this conversation. Created any other way the job has no origin, and delivery
   falls back to the configured home channel instead.
-- **The person's time zone, for any wall-clock time.** It is discovered at run
-  time and never hardcoded: this agent runs wherever it was installed, and the
-  server's own zone is nobody's in particular.
+- **The person's own handle**, from `plow_contacts`. It is what makes their
+  zone knowable without asking; the server's own zone is nobody's in particular.
 - Nothing else. `scripts/quando.py` is standard library only: no key, no
-  network, nothing to install.
+  network, nothing to install — the area-code table ships beside it.
 
 ## How to Run
 
 Run the resolver through `terminal`, from the skill directory:
 
-    python3 scripts/quando.py "<what the person said about when>" --tz <their zone>
+    python3 scripts/quando.py "<what they said about when>" --handle <their number>
 
-It prints one JSON object.
+Add `--tz <zone>` only once they have told you. It prints one JSON object.
 
 - **Exit 0** — resolved. Pass `["schedule"]` to `cronjob` verbatim.
-- **Exit 2** — not understood, already past, or an unknown zone. Ask the
-  question in `["ask"]` and stop. Do not guess.
+- **Exit 2** — not understood, already past, or nothing at all said where they
+  are. Ask the question in `["ask"]` and stop. Do not guess.
 
 Read `["zone_source"]` on every success:
 
 | value | what it means |
 |---|---|
-| `person` | you passed `--tz`; the zone is theirs |
+| `person` | they said it; it outranks their number from now on |
+| `inferido` | worked out from their area code — right until they say otherwise |
 | `installer` | `HERMES_TIMEZONE`, set by whoever installed this agent |
 | `server` | nobody chose it — it is just the machine's clock |
 
-Anything but `person` also lands a line in `["assumed"]` whenever the zone
-actually matters. Say it out loud; do not let it pass.
+The last two never reach you on a wall clock — the resolver exits 2 instead.
+`inferido` lands a line in `["assumed"]`: not a warning to obey, but why
+`["agora"]` has to be said out loud.
 
 `--now "<aware ISO>"` overrides the clock, for checking behaviour.
 
@@ -113,23 +114,18 @@ step 5, in their words — may break that silence.
    guaranteed to be in their language, and it is not guaranteed to be about
    what they meant.
 
-3. **Know whose clock it is, before resolving a wall-clock time.** You do not
-   have to remember it: once a zone has been passed with `--tz`, the resolver
-   keeps it and finds it by itself on every later run. Run step 4 first and
-   see what comes back.
+3. **Work their clock out — do not ask for it.** Call `plow_contacts`, take the
+   handle on your owner's own row (it comes first), pass it as `--handle`.
+   Their area code answers it offline, and the resolver keeps the answer: one
+   call, never repeated. **Do this on every request, relative delays
+   included** — where they are is for their job list, for what the delivery
+   says, and for the "na verdade, às 17h" one message later, not just for this
+   calculation. **Never fill `--tz` with a guess:** `--tz` is what they *said*,
+   and it outranks their number for good. `references/fuso.md` has the rest,
+   and is where exit 2 sends you.
 
-   **If it comes back exit 2 asking where they are, read
-   `references/fuso.md`** — a place instead of a zone, turned into one with
-   `maps`. Once per person, ever. **Never fill `--tz` with a guess of your
-   own:** it is recorded as the person's own answer and defeats the check.
-
-   **A relative delay skips this step entirely:** it needs no zone — which is
-   yours to work out, never to explain. "Fuso horário", "delay" and "relativo"
-   are not words the person hears unless you are asking them the question
-   above.
-
-4. **Run the resolver** on whatever the person said about when, passing `--tz`.
-   Silent too: no "vou criar o lembrete", no "deixa eu verificar".
+4. **Run the resolver** on what they said about when, with `--handle` (and
+   `--tz`, if told). Silent: no "vou criar o lembrete", no "deixa eu verificar".
 
 5. **On exit 2, ask and stop.** Never record "prazo não informado" when a time
    *was* said — that is the failure this skill exists to prevent.
@@ -201,6 +197,10 @@ step 5, in their words — may break that silence.
    needs arithmetic nobody does. Their own clock they check by glancing at
    their phone, and a wrong zone moves all three at once.
 
+   **Say `["agora"]` on relative delays too, whenever it is not `null`.** It is
+   the only way anyone finds out they travelled — nothing here can see that,
+   and an hour that does not match the phone in their hand is what tells them.
+
    **When `["human"]` and `["agora"]` are `null`**, say `["daqui"]` and no
    wall-clock time: an hour invented there would be the server's.
 
@@ -262,13 +262,13 @@ action name, no report that a tool ran.
   They are in `references/cronjob.md`, to read when a job behaves oddly.
 - **A naive timestamp is anchored to the configured Hermes zone**, which may not
   be the person's. Always pass the offset-carrying stamp the resolver returns.
-- **The server's zone is nobody's, and the resolver now REFUSES rather than
-  warning.** A wall clock on any zone but the person's exits 2 and asks, so the
-  old failure — job fires, log says delivered, person woken at the wrong hour —
-  has no path left. `references/fuso.md` is how you answer it.
-- **Daylight saving moves the wall clock under you.** Pass the IANA zone name —
-  `America/Los_Angeles`, not a fixed `-08:00` — so the offset is computed for
-  the target date, not today's. `maps` returns the IANA name already.
+- **The server's zone is nobody's.** A wall clock that reaches it exits 2 — but
+  it only gets there when `--handle` was missing or silent, which is rare.
+  Passing the number is what keeps the question away from them.
+- **Their number does not move when they do.** Travel is invisible here; the
+  `["agora"]` read-back is the only thing that surfaces it.
+- **Daylight saving moves the wall clock under you.** The IANA name carries the
+  rule; a fixed `-08:00` does not. Both the table and `maps` return IANA names.
 - **A time that already passed is not a reminder.** The resolver refuses it
   rather than scheduling something that can never fire.
 - **A weekday name said on that same weekday means next week.** The resolver
