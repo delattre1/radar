@@ -144,7 +144,7 @@ Stated plainly, because an agent that overpromises wastes your time:
 
 ## What it reports
 
-RadaR ships with the AI Worth Using **agent-index client**, which posts this
+RadaR's Plow base image ships the AI Worth Using **agent-index client**, which posts this
 install's token usage to a public leaderboard every five minutes. There is no
 switch to turn it off — that decision belongs to whoever builds the image, and
 this image was built with it.
@@ -155,9 +155,6 @@ What leaves your machine is narrow, and worth stating exactly:
 - **No prompts, no message content, no task titles, no file paths, no costs.**
 - One install id, drawn from random bytes so two copies of RadaR can be told
   apart. It says nothing about you or your machine.
-
-If you want RadaR without that, build the image without the `agent-index`
-service — everything else works the same.
 
 ---
 

@@ -27,7 +27,7 @@
 # b78250e APAGOU do `00-plow-sanitize` a promoção de `credentials.host`. Quem
 # subir este pino continuando a montar o `.host` fica sem credencial nenhuma e
 # estaciona igual — só que na própria máquina, em vez de na nuvem.
-FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-51f83158a70a383f03a4d03dbd8b6ea102cf0361@sha256:253d7ed3409effa7fa59113d93b4b79bb731d8264cdaf4cd60294924d0110a2e
+FROM public.ecr.aws/e1h7x4a2/plow-cloud-agents:base-ef0019372ff8bca593611b31ebd2e08f9f1458ff@sha256:a8a2f97ad78b8192d80a984dce81d3bf5a9a883d18cb7b677704913a09b56aee
 
 # A identidade específica deste agente.
 #
@@ -121,17 +121,9 @@ RUN chmod 0755 /etc/cont-init.d/01-stt-language \
 COPY --chown=0:0 image/s6-overlay/ /etc/s6-overlay/
 RUN chmod 0755 /etc/s6-overlay/scripts/slash-lock.py
 
-# O REPORTER DO AGENT INDEX. É ele que faz instalação e token CONTAREM no placar:
-# o Índice só sabe o que lhe é reportado, então um agente sem este serviço roda
-# igual e pontua zero. Copiado do `life-assistant-hermes-agent`, que é o exemplo
-# que a própria Plow manda copiar.
-#
-# O SERVIÇO NÃO TEM CHAVE DE DESLIGAR, e isso é decisão do upstream, dita na
-# letra dentro do `run`: quem não quer reportar constrói a imagem SEM ele. Uma
-# chave aqui só criaria um segundo lugar para discordar do Dockerfile.
-#
-# SEM `AGENT_ID` no ambiente ele NÃO CHUTA NOME: avisa que não há agente para
-# reportar e dorme.
+# O REPORTER DO AGENT INDEX vem na própria imagem base: o serviço `agent-index`
+# e o client em `/opt/plow`. É ele que faz instalação e token CONTAREM no
+# placar. SEM `AGENT_ID` no ambiente ele NÃO CHUTA NOME: avisa e dorme.
 #
 # PARA QUEM ESTE INSTALL REPORTA. Não é segredo e não é por instalação: é a
 # PÁGINA do agente no Agent Index, a mesma para todo mundo que instalar o
@@ -149,26 +141,3 @@ RUN chmod 0755 /etc/s6-overlay/scripts/slash-lock.py
 # enquanto o placar não vê nada. É o critério 3 do portão, e é o que não dá
 # erro nem aparece em log. O provisionador ainda pode sobrescrever.
 ENV AGENT_ID=radar
-
-# O CLIENT É BUSCADO NO BUILD, PINADO POR SHA E CONFERIDO POR SHA256 — as duas
-# metades importam e o upstream escreveu por quê: o sha impede que código não
-# revisado entre por baixo de um agente que segura credencial viva; a soma
-# impede que o host que serve aquele sha troque o conteúdo. O pino mora em
-# `vendor/client.pin`, e subir de versão é uma edição que alguém lê.
-COPY vendor/client.pin /opt/plow/agent-index-client.pin
-RUN set -eu; \
-    sha="$(sed -n 's/^sha=//p' /opt/plow/agent-index-client.pin)"; \
-    want="$(sed -n 's/^sha256=//p' /opt/plow/agent-index-client.pin)"; \
-    path="$(sed -n 's/^path=//p' /opt/plow/agent-index-client.pin)"; \
-    curl -fsS --max-time 60 -o /opt/plow/agent-index-client.py \
-      "https://raw.githubusercontent.com/plow-pbc/agent-index-client/${sha}/${path}"; \
-    got="$(sha256sum /opt/plow/agent-index-client.py | cut -d' ' -f1)"; \
-    [ "$got" = "$want" ] || { echo "agent-index client is $got, pin says $want" >&2; exit 1; }; \
-    chmod 0644 /opt/plow/agent-index-client.py
-
-# O modo do `run`, em passo separado e pelo MESMO motivo da persona e dos três
-# `cont-init` acima: o Windows não guarda bit de execução, e um `run` de longrun
-# sem ele não roda. O upstream não precisa deste chmod porque nasce em
-# filesystem que guarda o bit — esta casa precisa, e a falta apareceria só no
-# boot, como serviço que não sobe.
-RUN chmod 0755 /etc/s6-overlay/s6-rc.d/agent-index/run
