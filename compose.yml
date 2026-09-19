@@ -11,6 +11,20 @@
 services:
   agent:
     build: .
+    # VOLTA SOZINHO. Sem esta linha a politica e `restart: no`, medido com
+    # `docker inspect` em 17/09: a maquina reiniciou, o conteiner morreu as
+    # 21:11 e continuou morto. Subiu as 21:20 porque alguem abriu o editor e
+    # foi olhar — nao porque algo vigiasse. Ja houve um caso de catorze horas
+    # achado por acaso, e a diferenca entre nove minutos e catorze horas foi a
+    # hora em que uma pessoa passou por perto.
+    #
+    # Isto importa MAIS na maquina de quem instala do que na nossa: ninguem
+    # vai olhar o `docker ps` do computador de outra pessoa, e um lembrete
+    # cuja hora passa com o agendador fora do ar e apagado sem aviso
+    # ([R-graca]). `unless-stopped` e nao `always` de proposito: quem parar o
+    # agente de proposito mandou parar, e o reinicio da maquina nao desfaz a
+    # ordem dela.
+    restart: unless-stopped
     # O `AGENT_ID` NÃO MORA MAIS AQUI: mora no `Dockerfile`, assado na imagem.
     # Um deploy de nuvem não roda este arquivo — sobe a imagem sozinha, com o
     # ambiente do provisionador —, e um `AGENT_ID` que só existisse aqui não

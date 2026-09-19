@@ -1,6 +1,6 @@
 ---
 name: lembrete
-description: "Save what must not be forgotten; deliver, move or cancel."
+description: "Save what must not be forgotten, even with no time given; deliver, move or cancel."
 version: 0.1.0
 author: Matheus Sousa
 license: MIT
@@ -13,6 +13,15 @@ metadata:
 ---
 
 # Lembrete Skill
+
+**The tool is `cronjob`. Do not look for another, do not read the image's
+code, do not import a module.** This line is first because it holds the
+biggest mess. Measured 18/09/2026: the model opened this file, read it, and
+went digging through the image's source anyway.
+
+**No time given? Ask for the time.** A commitment with no moment is still this
+skill's job — it is the case that fails first in real life, and the one the
+index line used to stay quiet about.
 
 Turns a commitment mentioned in a message into one scheduled delivery back into
 the same conversation, and changes or calls it off afterwards. It handles a

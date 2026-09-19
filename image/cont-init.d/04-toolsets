@@ -1,0 +1,215 @@
+#!/bin/sh
+# Turn off the toolsets a reminder agent never calls, as root, before any
+# service starts.
+#
+# WHY THIS EXISTS
+#
+# Measured 18/09/2026 with `hermes prompt-size`: tool schemas are 31,580 B of
+# the fixed prompt against 13,596 B for the whole system prompt -- 70% of what
+# every single message pays, and the part nobody had ever looked at. The
+# skills index, which this house had already pruned from 6,067 to 281 bytes,
+# is 0.9% of the same bill.
+#
+# The five turned off here are the ones the reminder path does not touch:
+#
+#     delegation      4,013 B     session_search  3,181 B
+#     code_execution  3,009 B     web             1,910 B
+#     todo            1,329 B
+#                    --------
+#                    13,442 B     ~43% of the tool schema
+#
+# WHAT IS DELIBERATELY LEFT ON, because the skill does call them
+#
+#   terminal   4,947 B   runs scripts/quando.py -- the resolver IS the clock
+#   vision       845 B   step 4, the photo path
+#   cronjob              the whole scheduling mechanism
+#   file       5,404 B   not audited yet; a guess here is how a working path
+#                        gets cut. It stays until somebody reads what uses it.
+#
+# WHY THIS IS NOT OPTIMISING FOR THE LEADERBOARD -- it is the opposite
+#
+# The Index ranks on installs and reported tokens, so cutting cost shrinks the
+# number that ranks. The Matheus decided against the leaderboard on 15/09 and
+# the reasoning is his: the credit on an installed line is finite, ~200-300
+# conversations, so 22% less per message is an agent that lives LONGER in
+# somebody's hands. A long life is sustained use and new installs; inflating
+# tokens per turn moves nothing and reads like gaming the board.
+#
+# THE SECOND HOLE THIS CLOSES
+#
+# `code_execution` was in the agent's hand when it tried to bring the gateway
+# up by itself during the 18/09 battery, which nobody asked for ([R-bypass]).
+# An agent that only ever stores and delivers reminders has no business
+# holding a general code runner.
+#
+# WHY A SCRIPT, AND WHY EVERY BOOT
+#
+# Same door as `01-stt-language` and `02-cron-wrap`, for the same measured
+# reason: `00-plow-sanitize` seeds an ABSENT config.yaml only, so a home that
+# already exists never learns a new seed value. Running every boot reaches the
+# owner's existing home AND a stranger's first boot through one door.
+#
+# The key is `agent.disabled_toolsets`, which already carries `clarify` and
+# `browser` from the base. This script ADDS to that list and never replaces
+# it: a base that starts disabling something new must not have it switched
+# back on by us.
+#
+# ruamel round-trip, both parsers on the way out, atomic rename: the whole
+# apparatus of `02-cron-wrap`, and for the reason written in its header -- an
+# append shipped once and took down the command lock, because this file has
+# two readers and the strict one decides what is valid.
+set -eu
+
+CONFIG=/var/lib/hermes/config.yaml
+PYTHON=/opt/hermes/.venv/bin/python
+TMP="$CONFIG.toolsets-tmp"
+
+# `00-plow-sanitize` owns seeding. If there is no config yet, something ahead
+# of this failed, and inventing one here would hide it.
+[ -f "$CONFIG" ] || exit 0
+# Never write through a symlink the agent may have left here: this runs as root.
+[ -L "$CONFIG" ] && exit 0
+[ -x "$PYTHON" ] || exit 0
+
+rm -f "$TMP"
+
+status=0
+"$PYTHON" - "$CONFIG" "$TMP" <<'PY' || status=$?
+import sys
+
+from ruamel.yaml import YAML
+
+old_path, new_path = sys.argv[1], sys.argv[2]
+
+# Five names, and each one is here because the reminder path does not call it.
+# Adding a sixth is an edit somebody reads the skill for first.
+OURS = ["delegation", "session_search", "code_execution", "web", "todo"]
+
+try:
+    with open(old_path, encoding="utf-8") as handle:
+        text = handle.read()
+except Exception:
+    sys.exit(1)
+
+yaml = YAML()
+yaml.preserve_quotes = True
+yaml.allow_duplicate_keys = True
+
+try:
+    config = yaml.load(text)
+except Exception:
+    sys.exit(1)
+
+if config is None:
+    # An empty config is not ours to invent.
+    sys.exit(2)
+
+agent = config.get("agent")
+if agent is None:
+    config["agent"] = {"disabled_toolsets": list(OURS)}
+    agent = config["agent"]
+    current = agent["disabled_toolsets"]
+elif not hasattr(agent, "get"):
+    # `agent:` holds something that is not a mapping. Someone meant that.
+    sys.exit(1)
+else:
+    current = agent.get("disabled_toolsets")
+    if current is None:
+        agent["disabled_toolsets"] = list(OURS)
+        current = agent["disabled_toolsets"]
+    elif not isinstance(current, list):
+        # A scalar where a list belongs is somebody else's decision, not a
+        # shape to overwrite.
+        sys.exit(1)
+    else:
+        # ADD, never replace: whatever the base disables stays disabled, and
+        # the order it wrote is kept so the diff stays readable.
+        missing = [name for name in OURS if name not in current]
+        if not missing and text.count("disabled_toolsets") == 1:
+            # Already done, and the file carries a single key. The quiet path
+            # on every boot after the first. Asked BEFORE the append, because
+            # after it the list always contains our names and the question
+            # answers itself.
+            sys.exit(2)
+        for name in missing:
+            current.append(name)
+
+try:
+    with open(new_path, "w", encoding="utf-8") as handle:
+        yaml.dump(config, handle)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+
+if [ "$status" -ne 0 ]; then
+    rm -f "$TMP"
+    # 2 is "nothing to do", and is the quiet path on every boot after the first.
+    [ "$status" -eq 2 ] || echo "04-toolsets: could not build the config; left alone" >&2
+    exit 0
+fi
+
+# Refuse to install anything that is not the same config plus our names inside
+# `agent.disabled_toolsets`. PyYAML for the value comparison, ruamel because it
+# is the strict reader and the one whose failure took down the command lock.
+if "$PYTHON" - "$TMP" "$CONFIG" <<'PY'
+import sys
+
+import yaml
+from ruamel.yaml import YAML
+
+new_path, old_path = sys.argv[1], sys.argv[2]
+
+OURS = ["delegation", "session_search", "code_execution", "web", "todo"]
+
+try:
+    with open(new_path, encoding="utf-8") as handle:
+        new = yaml.safe_load(handle)
+    with open(old_path, encoding="utf-8") as handle:
+        old = yaml.safe_load(handle) or {}
+except Exception:
+    sys.exit(1)
+
+if not isinstance(new, dict) or not isinstance(old, dict):
+    sys.exit(1)
+
+old_agent = old.get("agent")
+old_agent = dict(old_agent) if isinstance(old_agent, dict) else {}
+old_list = old_agent.get("disabled_toolsets")
+old_list = list(old_list) if isinstance(old_list, list) else []
+
+expected = list(old_list) + [n for n in OURS if n not in old_list]
+expected_agent = dict(old_agent)
+expected_agent["disabled_toolsets"] = expected
+
+if new.get("agent") != expected_agent:
+    sys.exit(1)
+# Every key that was there is still there, unchanged. The only difference this
+# write is allowed to make is inside `agent`.
+if {k: v for k, v in new.items() if k != "agent"} != {
+    k: v for k, v in old.items() if k != "agent"
+}:
+    sys.exit(1)
+
+# The strict reader must be able to load the result with duplicates FORBIDDEN,
+# which is how every other consumer opens this file.
+strict = YAML()
+strict.preserve_quotes = True
+try:
+    with open(new_path, encoding="utf-8") as handle:
+        strict.load(handle)
+except Exception:
+    sys.exit(1)
+
+sys.exit(0)
+PY
+then
+    chown hermes:hermes "$TMP"
+    chmod 0640 "$TMP"
+    mv -f "$TMP" "$CONFIG"
+    echo "04-toolsets: delegation, session_search, code_execution, web and todo are off" >&2
+else
+    rm -f "$TMP"
+    echo "04-toolsets: refused to write an unverifiable config; left alone" >&2
+fi

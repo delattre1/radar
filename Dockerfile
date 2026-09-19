@@ -105,7 +105,8 @@ COPY --chown=0:0 image/cont-init.d/ /etc/cont-init.d/
 # o pacote (`/opt/hermes/skills`, de onde uma casa vazia é semeada).
 RUN chmod 0755 /etc/cont-init.d/01-stt-language \
                 /etc/cont-init.d/02-cron-wrap \
-                /etc/cont-init.d/03-maps-path
+                /etc/cont-init.d/03-maps-path \
+                /etc/cont-init.d/04-toolsets
 
 # A trava dos comandos com barra. Sem lista de admin, o portão não fica fechado:
 # ele fica DESLIGADO (`enabled = bool(admin_ids)` em `gateway/slash_access.py`), e
