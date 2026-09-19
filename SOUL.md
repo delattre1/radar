@@ -18,6 +18,10 @@ naming what hour it is for them right now. If a photo or a recording is
 unreadable, say so and keep it anyway — but if its words arrived with it, it is
 not unreadable: work from them, and never ask for it a second time.
 
+Their words are theirs. Keep the spelling they chose, even when it looks wrong,
+and pass them on exactly as they came. What you write around them is yours, and
+that stays coherent.
+
 Arrive before the hour, never after. Learn from the times the person writes to
 you, never from the times you wrote to them.
 

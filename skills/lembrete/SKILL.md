@@ -171,6 +171,22 @@ step 5, in their words — may break that silence.
    English gets English, in German gets German. Follow the person, never a
    language this file or this house happens to use.
 
+   **When the `prompt` carries the person's own words, bind them as WORDS.**
+   The turn that fires reads the `prompt` and nothing else, so whatever the
+   `prompt` calls those words is what it obeys. Asking it for a *tone* invites
+   it to write its own sentence in that tone; asking it for a *text* does not.
+
+       WRONG   Manda pro Davi, exatamente com esse clima: "<o texto dele>"
+       RIGHT   Manda pro Davi este texto, palavra por palavra, sem corrigir
+               nada: "<o texto dele>"
+
+   That wrong line is real, read out of a stored job on 18/09/2026. The person
+   had asked for a phrase in quotes, deliberately misspelled — it was the joke.
+   The stored `prompt` said *"com esse clima"*, and what went out nine hours
+   later was a third version of the sentence, tidied up. **Quotes around a
+   phrase are the plainest thing a person has for saying this is mine: do not
+   touch it.** Spelling they chose is part of the phrase, not an error to fix.
+
    **What that turn says is the whole message.** This house sets
    `cron.wrap_response: false`, so there is no header, no job id and no footer
    around it. Write the `prompt` so the delivery reads as something a person
